@@ -60,10 +60,10 @@ def check_password():
 # ==============================================================================
 if check_password():
     st.title("⚡ Tredge.in Institutional Quant Terminal")
-    st.caption("Real-Time Option Greeks, Net GEX, Flip Levels, Sigma Ranges, Visual Charts & Wall Analytics Engine")
+    st.caption("Real-Time Option Greeks, Net GEX, Call/Put GEX, Flip Levels, Sigma Ranges & Visual Charts")
     
     # --------------------------------------------------------------------------
-    # A. MAIN SCREEN ASSET SELECTOR (MOBILE FRIENDLY - FRONT & CENTER)
+    # A. MAIN SCREEN ASSET SELECTOR
     # --------------------------------------------------------------------------
     st.markdown("---")
     st.subheader("🎯 Select Index / Stock")
@@ -141,15 +141,24 @@ if check_password():
         st.info("💡 लाइव मार्केट में " + selected_symbol + " के लिए Delta, Gamma, Theta और IV Skew यहाँ ब्लिंक करेंगे।")
 
     # --------------------------------------------------------------------------
-    # D. GAMMA ANALYTICS (NET GEX, ABS GEX, FLIP LEVEL, MAX PAIN)
+    # D. COMPLETE GEX BREAKDOWN (NET, CALL GEX, PUT GEX & ABSOLUTE GEX)
     # --------------------------------------------------------------------------
     st.markdown("---")
-    st.header("🎯 Gamma Exposure (GEX), Flip Level & Max Pain")
+    st.header("🎯 Complete Gamma Exposure (GEX) Breakdown")
     
     if active_df is not None and not active_df.empty:
         try:
-            net_gex = round(active_df['Net_GEX'].sum(), 2) if 'Net_GEX' in active_df.columns else 0.0
-            abs_gex = round(active_df['Net_GEX'].abs().sum(), 2) if 'Net_GEX' in active_df.columns else 0.0
+            # GEX Calculations
+            call_gex = round(active_df['Call_GEX'].sum(), 2) if 'Call_GEX' in active_df.columns else 0.0
+            put_gex = round(active_df['Put_GEX'].sum(), 2) if 'Put_GEX' in active_df.columns else 0.0
+            
+            if 'Net_GEX' in active_df.columns:
+                net_gex = round(active_df['Net_GEX'].sum(), 2)
+            else:
+                net_gex = round(call_gex - abs(put_gex), 2)
+                
+            abs_gex = round(abs(call_gex) + abs(put_gex), 2)
+
             max_pain = active_df['Max_Pain'].iloc[0] if 'Max_Pain' in active_df.columns else "N/A"
 
             gex_flip_strike = "N/A"
@@ -161,19 +170,23 @@ if check_password():
                 if not zero_cross.empty:
                     gex_flip_strike = zero_cross.iloc[0][strike_col]
 
-            gx1, gx2, gx3, gx4 = st.columns(4)
+            gx1, gx2, gx3, gx4, gx5, gx6 = st.columns(6)
             with gx1:
                 st.metric(label="🛡️ Net GEX ($)", value=f"{net_gex:,}", delta="Positive (Stable)" if net_gex >= 0 else "Negative (Volatile)", delta_color="normal" if net_gex >= 0 else "inverse")
             with gx2:
-                st.metric(label="📊 Absolute GEX ($)", value=f"{abs_gex:,}", delta="Total Market Gamma")
+                st.metric(label="📈 Call GEX ($)", value=f"{call_gex:,}")
             with gx3:
-                st.metric(label="🔄 GEX Flip Level", value=f"{gex_flip_strike:,}" if isinstance(gex_flip_strike, (int, float)) else str(gex_flip_strike), delta="Volatility Trigger")
+                st.metric(label="📉 Put GEX ($)", value=f"{put_gex:,}")
             with gx4:
-                st.metric(label="🎯 Max Pain Strike", value=f"{max_pain:,}" if isinstance(max_pain, (int, float)) else str(max_pain), delta="Max Loss Zone")
+                st.metric(label="📊 Absolute GEX ($)", value=f"{abs_gex:,}", delta="Total Market Gamma")
+            with gx5:
+                st.metric(label="🔄 GEX Flip Level", value=f"{gex_flip_strike:,}" if isinstance(gex_flip_strike, (int, float)) else str(gex_flip_strike))
+            with gx6:
+                st.metric(label="🎯 Max Pain Strike", value=f"{max_pain:,}" if isinstance(max_pain, (int, float)) else str(max_pain))
         except Exception:
             pass
     else:
-        st.info("💡 " + selected_symbol + " का Net GEX, Absolute GEX, GEX Flip Level और Max Pain यहाँ दिखेगा।")
+        st.info("💡 " + selected_symbol + " का Net GEX, Call GEX, Put GEX, Absolute GEX, Flip Level और Max Pain यहाँ प्रदर्शित होगा।")
 
     # --------------------------------------------------------------------------
     # E. PCR & SUPPORT/RESISTANCE WALLS WITH DIFFERENCE SPREAD
