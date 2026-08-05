@@ -488,4 +488,7 @@ hide_all_branding = """
     </script>
 """
 st.markdown(hide_all_branding, unsafe_allow_html=True)
+if 'password_correct' in st.session_state and st.session_state["password_correct"]:
+    # यहाँ नीचे आपके सारे नए सेक्शंस का कोड रहेगा
+
 
