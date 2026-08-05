@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from scipy.stats import norm
+import requests
 import time
 
 # ==============================================================================
@@ -14,7 +15,6 @@ st.set_page_config(
     layout="wide"
 )
 
-# Hide Streamlit Branding, Header & Footer
 hide_all_branding = """
     <style>
     #MainMenu {visibility: hidden !important;}
@@ -35,7 +35,6 @@ st.markdown(hide_all_branding, unsafe_allow_html=True)
 # 2. PASSWORD PROTECTION SYSTEM
 # ==============================================================================
 def check_password():
-    """Returns True if the user has entered the correct password."""
     if "password_correct" not in st.session_state:
         st.session_state["password_correct"] = False
 
@@ -43,7 +42,7 @@ def check_password():
         return True
 
     st.title("🔒 Tredge.in Institutional Terminal Login")
-    st.caption("Unauthorized Access Prohibited. Enter Your Terminal Key.")
+    st.caption("Enter Your Terminal Key to Access.")
     
     password_input = st.text_input("Enter Key", type="password", key="password_input")
     
@@ -58,48 +57,38 @@ def check_password():
 
 
 # ==============================================================================
-# 3. QUANT ENGINES: BLACK-SCHOLES & DYNAMIC LOT SIZES
+# 3. QUANT ENGINES & DATA FETCHERS (NSE DIRECT, DHAN & BS GREEKS)
 # ==============================================================================
 DEFAULT_LOT_SIZES = {
     "NIFTY": 65, "BANKNIFTY": 15, "FINNIFTY": 25, "MIDCPNIFTY": 50, "NIFTYNEXT50": 10,
     "SENSEX": 10, "BANKEX": 15,
     "RELIANCE": 250, "TCS": 175, "INFY": 400, "HDFCBANK": 550, "ICICIBANK": 700,
-    "SBIN": 1500, "BHARTIARTL": 950, "ITC": 1600, "KOTAKBANK": 400, "LT": 300,
-    "AXISBANK": 625, "TATAMOTORS": 1425, "TATASTEEL": 5500, "MARUTI": 100,
-    "BAJFINANCE": 125, "HINDUNILVR": 300
+    "SBIN": 1500, "BHARTIARTL": 950, "ITC": 1600, "KOTAKBANK": 400, "LT": 300
 }
 
 def calculate_bs_greeks(S, K, T, r, sigma, option_type='call'):
-    """Calculates exact Option Greeks using Black-Scholes Model."""
     try:
         if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
-            return (0.5 if option_type == 'call' else -0.5), 0.0001, 0.0
+            return (0.5 if option_type == 'call' else -0.5), 0.0001
         
         d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-        d2 = d1 - sigma * np.sqrt(T)
-        
         gamma = norm.pdf(d1) / (S * sigma * np.sqrt(T))
         
         if option_type == 'call':
             delta = norm.cdf(d1)
-            theta = (-(S * norm.pdf(d1) * sigma) / (2 * np.sqrt(T)) - r * K * np.exp(-r * T) * norm.cdf(d2)) / 365.0
         else:
             delta = norm.cdf(d1) - 1.0
-            theta = (-(S * norm.pdf(d1) * sigma) / (2 * np.sqrt(T)) + r * K * np.exp(-r * T) * norm.cdf(-d2)) / 365.0
             
-        return float(delta), float(gamma), float(theta)
+        return float(delta), float(gamma)
     except Exception:
-        return 0.5, 0.0001, 0.0
+        return 0.5, 0.0001
 
 
 def compute_institutional_gex(df, symbol, active_lot_size):
-    """Calculates True Institutional Notional GEX using Lot Sizes and BS Gamma."""
-    r = 0.07 # 7% Risk Free Rate
-    
+    r = 0.07
     c_gex_list, p_gex_list = [], []
     c_delta_list, p_delta_list = [], []
     c_gamma_list, p_gamma_list = [], []
-    c_theta_list, p_theta_list = [], []
     
     for _, row in df.iterrows():
         S = float(row['Spot_Price'])
@@ -108,10 +97,9 @@ def compute_institutional_gex(df, symbol, active_lot_size):
         p_iv = max(float(row['Put_IV']) / 100.0, 0.05)
         dte = max(float(row['DTE']), 1.0) / 365.0
         
-        cd, cg, ct = calculate_bs_greeks(S, K, dte, r, c_iv, 'call')
-        pd_val, pg, pt = calculate_bs_greeks(S, K, dte, r, p_iv, 'put')
+        cd, cg = calculate_bs_greeks(S, K, dte, r, c_iv, 'call')
+        pd_val, pg = calculate_bs_greeks(S, K, dte, r, p_iv, 'put')
         
-        # Institutional GEX Formula using Active Lot Size
         c_gex = cg * float(row['Call_OI']) * active_lot_size * (S ** 2) / 100000.0
         p_gex = -pg * float(row['Put_OI']) * active_lot_size * (S ** 2) / 100000.0
         
@@ -121,22 +109,116 @@ def compute_institutional_gex(df, symbol, active_lot_size):
         p_delta_list.append(pd_val)
         c_gamma_list.append(cg)
         p_gamma_list.append(pg)
-        c_theta_list.append(ct)
-        p_theta_list.append(pt)
         
     df['Call_GEX'] = c_gex_list
     df['Put_GEX'] = p_gex_list
     df['Net_GEX'] = (df['Call_GEX'] + df['Put_GEX']).round(2)
     df['Delta'] = [round((c + p)/2, 3) for c, p in zip(c_delta_list, p_delta_list)]
     df['Gamma'] = [round((cg + pg)/2, 5) for cg, pg in zip(c_gamma_list, p_gamma_list)]
-    df['Theta'] = [round((ct + pt)/2, 2) for ct, pt in zip(c_theta_list, p_theta_list)]
     
     return df
+
+
+def fetch_nse_live_option_chain(symbol, active_lot_size):
+    """Directly fetches live option chain from NSE website."""
+    try:
+        is_index = symbol in ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNEXT50"]
+        url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}" if is_index else f"https://www.nseindia.com/api/option-chain-equities?symbol={symbol}"
+        
+        headers = {
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'accept-encoding': 'gzip, deflate, br',
+            'accept-language': 'en-US,en;q=0.9'
+        }
+        s = requests.Session()
+        s.get("https://www.nseindia.com", headers=headers, timeout=5)
+        res = s.get(url, headers=headers, timeout=5)
+        
+        if res.status_code == 200:
+            json_data = res.json()
+            records_data = json_data.get('records', {})
+            data_list = records_data.get('data', [])
+            spot = float(records_data.get('underlyingValue', 24500))
+            
+            rows = []
+            for item in data_list:
+                k = item.get('strikePrice')
+                ce = item.get('CE', {})
+                pe = item.get('PE', {})
+                if ce or pe:
+                    rows.append({
+                        "Symbol": symbol,
+                        "Spot_Price": int(spot),
+                        "Strike": int(k),
+                        "Call_OI": int(ce.get('openInterest', 0)),
+                        "Put_OI": int(pe.get('openInterest', 0)),
+                        "Call_Volume": int(ce.get('totalTradedVolume', 0)),
+                        "Put_Volume": int(pe.get('totalTradedVolume', 0)),
+                        "Call_IV": float(ce.get('impliedVolatility', 15.0)),
+                        "Put_IV": float(pe.get('impliedVolatility', 15.0)),
+                        "IV": float((ce.get('impliedVolatility', 15.0) + pe.get('impliedVolatility', 15.0))/2.0),
+                        "DTE": 5,
+                        "Max_Pain": int(spot)
+                    })
+            df = pd.DataFrame(rows)
+            if not df.empty:
+                df = compute_institutional_gex(df, symbol, active_lot_size)
+                return df
+    except Exception:
+        pass
+    return None
+
+
+def fetch_dhan_option_chain(symbol, client_id, access_token, lot_size):
+    try:
+        url = "https://api.dhan.co/v2/optionchain"
+        headers = {
+            "access-token": access_token,
+            "client-id": client_id,
+            "Content-Type": "application/json"
+        }
+        exch_seg = "BSE_FNO" if symbol in ["SENSEX", "BANKEX"] else "NSE_FNO"
+        payload = {"UnderlyingSymbol": symbol, "ExchangeSegment": exch_seg}
+
+        res = requests.post(url, json=payload, headers=headers, timeout=5)
+        if res.status_code == 200:
+            resp_data = res.json()
+            if "data" in resp_data:
+                oc_data = resp_data["data"]
+                records = []
+                spot = float(oc_data.get("last_price", 24500))
+
+                for strike_str, chain in oc_data.get("oc", {}).items():
+                    k = float(strike_str)
+                    c_info = chain.get("ce", {})
+                    p_info = chain.get("pe", {})
+
+                    records.append({
+                        "Symbol": symbol,
+                        "Spot_Price": int(spot),
+                        "Strike": int(k),
+                        "Call_OI": int(c_info.get("oi", 0)),
+                        "Put_OI": int(p_info.get("oi", 0)),
+                        "Call_Volume": int(c_info.get("volume", 0)),
+                        "Put_Volume": int(p_info.get("volume", 0)),
+                        "Call_IV": float(c_info.get("iv", 15.0)),
+                        "Put_IV": float(p_info.get("iv", 15.0)),
+                        "IV": float((float(c_info.get("iv", 15.0)) + float(p_info.get("iv", 15.0))) / 2.0),
+                        "DTE": 5,
+                        "Max_Pain": int(spot)
+                    })
+
+                df = pd.DataFrame(records)
+                if not df.empty:
+                    df = compute_institutional_gex(df, symbol, lot_size)
+                    return df
+    except Exception:
+        pass
+    return None
 # ==============================================================================
-# 4. HELPER FUNCTIONS: CSV PARSER WITH AUTO LOT DETECTION & STRIKE FILTER
+# 4. HELPER FUNCTIONS: CSV PARSER, GENERATOR & STRIKE FILTER
 # ==============================================================================
 def parse_uploaded_csv(uploaded_file, symbol, active_lot_size):
-    """Parses BSE & NSE Option Chain CSV files with Auto-Lot Size Detection."""
     try:
         try:
             df_raw = pd.read_csv(uploaded_file, header=None, on_bad_lines='skip', engine='python')
@@ -200,7 +282,6 @@ def parse_uploaded_csv(uploaded_file, symbol, active_lot_size):
 
 
 def generate_sample_option_chain(symbol, active_lot_size):
-    """Generates realistic sample data for testing with BS Greeks."""
     base_prices = {
         "NIFTY": 24500, "BANKNIFTY": 52000, "FINNIFTY": 23500, "MIDCPNIFTY": 13000, "NIFTYNEXT50": 70000,
         "SENSEX": 78500, "BANKEX": 58000,
@@ -212,12 +293,15 @@ def generate_sample_option_chain(symbol, active_lot_size):
     strikes = [spot + (i * step) for i in range(-25, 26)]
     
     data = []
-    for s in strikes:
+    for i, s in enumerate(strikes):
         dist = abs(s - spot)
         c_oi = int(max(1000, 100000 - dist * 30 + np.random.randint(-5000, 5000)))
         p_oi = int(max(1000, 100000 - dist * 25 + np.random.randint(-5000, 5000)))
         c_vol = int(c_oi * np.random.uniform(0.1, 0.4))
         p_vol = int(p_oi * np.random.uniform(0.1, 0.4))
+        
+        c_iv = round(14.0 + (dist / 500.0) ** 1.2, 2)
+        p_iv = round(15.5 + (dist / 400.0) ** 1.1, 2)
         
         data.append({
             "Symbol": symbol,
@@ -227,9 +311,9 @@ def generate_sample_option_chain(symbol, active_lot_size):
             "Put_OI": p_oi,
             "Call_Volume": c_vol,
             "Put_Volume": p_vol,
-            "Call_IV": round(14.5 + np.random.uniform(-1, 1), 2),
-            "Put_IV": round(16.2 + np.random.uniform(-1, 1), 2),
-            "IV": 15.3,
+            "Call_IV": c_iv,
+            "Put_IV": p_iv,
+            "IV": round((c_iv + p_iv)/2, 2),
             "DTE": 5,
             "Max_Pain": spot
         })
@@ -239,7 +323,6 @@ def generate_sample_option_chain(symbol, active_lot_size):
 
 
 def filter_around_atm(df, num_strikes=10):
-    """Filters dataframe to 10 strikes above and 10 strikes below ATM Spot Price."""
     if df is None or df.empty or 'Strike' not in df.columns or 'Spot_Price' not in df.columns:
         return df
     
@@ -254,7 +337,6 @@ def filter_around_atm(df, num_strikes=10):
 
 
 def generate_fno_stocks_watchlist():
-    """Generates overall Net GEX Watchlist for all F&O Stocks."""
     fno_list = [
         "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", 
         "BHARTIARTL", "ITC", "KOTAKBANK", "LT", "AXISBANK", "TATAMOTORS"
@@ -283,15 +365,20 @@ def generate_fno_stocks_watchlist():
 # 5. MAIN PROTECTED DASHBOARD
 # ==============================================================================
 if check_password():
-    st.sidebar.title("⚙️ Terminal Controls")
+    st.sidebar.title("🔑 Dhan API Login (Optional)")
+    dhan_client_id = st.sidebar.text_input("Dhan Client ID", type="default", placeholder="Optional")
+    dhan_access_token = st.sidebar.text_input("Dhan Access Token", type="password", placeholder="Optional")
+    
+    st.sidebar.markdown("---")
+    st.sidebar.title("⚙️ Auto-Refresh Controls")
     auto_refresh = st.sidebar.checkbox("🔄 Live Auto-Refresh Engine", value=False)
     refresh_rate = st.sidebar.select_slider("Refresh Rate (Seconds):", options=[5, 10, 30, 60], value=10)
     
     st.title("⚡ Tredge.in Institutional Quant Terminal")
-    st.caption("Real-Time BS Option Greeks, True Institutional GEX, Auto Lot Detection & Interactive Overlay Engine")
+    st.caption("Live Option Chain Analytics, Greeks, Volume PCR, OI Walls & IV Skew Curve Engine")
     
     # --------------------------------------------------------------------------
-    # A. ASSET SELECTOR, DYNAMIC LOT SIZE & FILE UPLOADER
+    # A. ASSET SELECTOR & DATA CONTROLS
     # --------------------------------------------------------------------------
     st.markdown("---")
     col_sel, col_file = st.columns([2, 1])
@@ -321,8 +408,7 @@ if check_password():
                 min_value=1,
                 max_value=50000,
                 value=int(default_lot),
-                step=5,
-                help="Change lot size if exchange revises standard contract sizes."
+                step=5
             )
 
     with col_file:
@@ -330,25 +416,42 @@ if check_password():
         uploaded_csv = st.file_uploader(f"Upload CSV File for {selected_symbol}", type=["csv"])
 
     # --------------------------------------------------------------------------
-    # B. DATA ENGINE & ATM ±10 STRIKES FILTERING
+    # B. INTELLIGENT DATA ROUTING (NSE DIRECT -> DHAN API -> CSV -> SAMPLE)
     # --------------------------------------------------------------------------
-    if uploaded_csv is not None:
+    raw_df = None
+    data_source = ""
+
+    # Priority 1: Try NSE Direct Web Fetcher for NSE symbols
+    if uploaded_csv is None and not (dhan_client_id and dhan_access_token):
+        raw_df = fetch_nse_live_option_chain(selected_symbol, active_lot_size)
+        if raw_df is not None and not raw_df.empty:
+            data_source = "🌐 LIVE NSE Website Direct Stream"
+
+    # Priority 2: Try Dhan API if credentials provided
+    if raw_df is None and dhan_client_id and dhan_access_token:
+        raw_df = fetch_dhan_option_chain(selected_symbol, dhan_client_id, dhan_access_token, active_lot_size)
+        if raw_df is not None and not raw_df.empty:
+            data_source = "⚡ LIVE Dhan Broker API Stream"
+
+    # Priority 3: Try Offline CSV Upload
+    if raw_df is None and uploaded_csv is not None:
         raw_df, detected_lot_val = parse_uploaded_csv(uploaded_csv, selected_symbol, active_lot_size)
         if raw_df is not None and not raw_df.empty:
             active_lot_size = detected_lot_val
-            st.success(f"✅ Loaded closing data for **{selected_symbol}** (Auto-Detected Lot Size: **{active_lot_size}**)")
-        else:
-            raw_df = generate_sample_option_chain(selected_symbol, active_lot_size)
-    else:
+            data_source = "📁 Uploaded CSV Closing Dataset"
+
+    # Priority 4: Fallback to Sample Buffer Dataset
+    if raw_df is None:
         raw_df = generate_sample_option_chain(selected_symbol, active_lot_size)
+        data_source = "💡 Simulated Buffer Dataset (Off-Market / Testing)"
 
     active_df = filter_around_atm(raw_df, num_strikes=10)
     spot_price = int(active_df['Spot_Price'].iloc[0])
 
-    st.info(f"🎯 Active Asset: **{selected_symbol}** | Spot Price: **{spot_price:,}** | Active Lot Size: **{active_lot_size}** (Focused on ATM ±10 Strike Prices)")
+    st.success(f"Connected Source: **{data_source}** | Asset: **{selected_symbol}** | Spot Price: **{spot_price:,}** | Lot Size: **{active_lot_size}**")
 
     # --------------------------------------------------------------------------
-    # C. BLACK-SCHOLES OPTION GREEKS & IV SKEW
+    # C. BLACK-SCHOLES OPTION GREEKS & IV SKEW (NO THETA)
     # --------------------------------------------------------------------------
     st.markdown("---")
     st.header("📈 Black-Scholes Option Greeks & Implied Volatility (IV) Skew")
@@ -356,71 +459,36 @@ if check_password():
     try:
         delta = round(active_df['Delta'].mean(), 3)
         gamma = round(active_df['Gamma'].mean(), 5)
-        theta = round(active_df['Theta'].mean(), 2)
         call_iv = round(active_df['Call_IV'].mean(), 2)
         put_iv = round(active_df['Put_IV'].mean(), 2)
         iv_skew = round(put_iv - call_iv, 2)
 
-        g1, g2, g3, g4, g5 = st.columns(5)
+        g1, g2, g3, g4 = st.columns(4)
         with g1:
-            st.metric(label="Δ BS Delta (Avg)", value=delta)
+            st.metric(label="Δ BS Delta (Directional)", value=delta)
         with g2:
-            st.metric(label="Γ BS Gamma (Avg)", value=gamma)
+            st.metric(label="Γ BS Gamma (Speed)", value=gamma)
         with g3:
-            st.metric(label="Θ BS Theta (Daily)", value=theta)
-        with g4:
             st.metric(label="📊 Call IV vs Put IV", value=f"{call_iv}% / {put_iv}%")
-        with g5:
+        with g4:
             st.metric(label="⚡ IV Skew (Put-Call)", value=f"{iv_skew}%", delta="Put Heavy" if iv_skew > 0 else "Call Heavy")
     except Exception:
         pass
 
     # --------------------------------------------------------------------------
-    # D. COMPLETE INSTITUTIONAL GEX BREAKDOWN & GEX FLIP LEVEL
+    # D. SUPPORT / RESISTANCE WALLS, OI PCR & VOLUME PCR
     # --------------------------------------------------------------------------
     st.markdown("---")
-    st.header("🎯 True Institutional Gamma Exposure Breakdown & Flip Level")
-    
-    try:
-        call_gex = round(active_df['Call_GEX'].sum(), 2)
-        put_gex = round(active_df['Put_GEX'].sum(), 2)
-        net_gex = round(active_df['Net_GEX'].sum(), 2)
-        abs_gex = round(abs(call_gex) + abs(put_gex), 2)
-        max_pain = int(active_df['Max_Pain'].iloc[0])
-
-        gex_flip_strike = "N/A"
-        sorted_df = active_df.sort_values(by='Strike').copy()
-        sorted_df['Cum_GEX'] = sorted_df['Net_GEX'].cumsum()
-        zero_cross = sorted_df[sorted_df['Cum_GEX'] >= 0]
-        if not zero_cross.empty:
-            gex_flip_strike = int(zero_cross.iloc[0]['Strike'])
-
-        gx1, gx2, gx3, gx4, gx5, gx6 = st.columns(6)
-        with gx1:
-            st.metric(label="🛡️ Net GEX ($)", value=f"{net_gex:,}", delta="Positive (Stable)" if net_gex >= 0 else "Negative (Volatile)", delta_color="normal" if net_gex >= 0 else "inverse")
-        with gx2:
-            st.metric(label="📈 Call GEX ($)", value=f"{call_gex:,}")
-        with gx3:
-            st.metric(label="📉 Put GEX ($)", value=f"{put_gex:,}")
-        with gx4:
-            st.metric(label="📊 Absolute GEX ($)", value=f"{abs_gex:,}", delta="Total Institutional Gamma")
-        with gx5:
-            st.metric(label="🔄 GEX Flip Level", value=f"{gex_flip_strike:,}" if isinstance(gex_flip_strike, int) else str(gex_flip_strike), delta="Volatility Trigger")
-        with gx6:
-            st.metric(label="🎯 Max Pain Strike", value=f"{max_pain:,}")
-    except Exception:
-        pass
-
-    # --------------------------------------------------------------------------
-    # E. SUPPORT / RESISTANCE WALLS & DISTANCE FROM SPOT
-    # --------------------------------------------------------------------------
-    st.markdown("---")
-    st.header("🧱 Support/Resistance Walls & Distance from Spot")
+    st.header("🧱 PCR, Support/Resistance Walls & Distance from Spot")
 
     try:
         total_call_oi = active_df['Call_OI'].sum()
         total_put_oi = active_df['Put_OI'].sum()
+        total_call_vol = active_df['Call_Volume'].sum()
+        total_put_vol = active_df['Put_Volume'].sum()
+
         oi_pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi > 0 else 0.0
+        vol_pcr = round(total_put_vol / total_call_vol, 2) if total_call_vol > 0 else 0.0
 
         call_wall_strike = int(active_df.loc[active_df['Call_OI'].idxmax()]['Strike'])
         put_wall_strike = int(active_df.loc[active_df['Put_OI'].idxmax()]['Strike'])
@@ -433,18 +501,18 @@ if check_password():
         with w1:
             st.metric(label="📈 OI PCR", value=oi_pcr, delta="Bullish" if oi_pcr >= 1.0 else "Bearish")
         with w2:
-            st.metric(label="🛡️ Put Wall (Support)", value=f"{put_wall_strike:,}", delta=f"-{put_wall_dist} Pts from Spot")
+            st.metric(label="⚡ Volume PCR", value=vol_pcr, delta="Buying" if vol_pcr >= 1.0 else "Selling")
         with w3:
-            st.metric(label="🚧 Call Wall (Resistance)", value=f"{call_wall_strike:,}", delta=f"+{call_wall_dist} Pts from Spot")
+            st.metric(label="🛡️ Put Wall (Support)", value=f"{put_wall_strike:,}", delta=f"-{put_wall_dist} Pts")
         with w4:
-            st.metric(label="📐 Wall Range Gap", value=f"{wall_range_gap:,} Pts", delta="Support to Resistance Gap")
+            st.metric(label="🚧 Call Wall (Resistance)", value=f"{call_wall_strike:,}", delta=f"+{call_wall_dist} Pts")
         with w5:
-            st.metric(label="🎯 Current Spot", value=f"{spot_price:,}")
+            st.metric(label="📐 Wall Range Gap", value=f"{wall_range_gap:,} Pts")
     except Exception:
         pass
 
     # --------------------------------------------------------------------------
-    # F. QUANT RANGES & SIGMA DISTRIBUTION (1σ / 2σ)
+    # E. QUANT RANGES & SIGMA DISTRIBUTION (1σ / 2σ)
     # --------------------------------------------------------------------------
     st.markdown("---")
     st.header("📐 Quant Ranges & Sigma Distribution (1σ & 2σ)")
@@ -474,57 +542,32 @@ if check_password():
         pass
 
     # --------------------------------------------------------------------------
-    # G. VISUAL CHARTS WITH OVERLAY ANNOTATIONS
+    # F. VISUAL CHARTS: OPEN INTEREST WALLS & IV SKEW CURVE
     # --------------------------------------------------------------------------
     st.markdown("---")
-    st.header("📊 Interactive Visual Charts (With Flip & Spot Level Overlays)")
+    st.header("📊 Interactive Visual Charts")
 
     try:
-        c_tab1, c_tab2 = st.tabs(["⚡ Net GEX Profile Chart", "🧱 Open Interest Walls Chart"])
+        c_tab1, c_tab2 = st.tabs(["🧱 Open Interest Walls Chart", "📈 Implied Volatility (IV) Skew Curve"])
 
         strike_labels = [str(s) for s in active_df['Strike']]
 
         with c_tab1:
-            fig_gex = go.Figure()
-            colors = ['#26a69a' if val >= 0 else '#ef5350' for val in active_df['Net_GEX']]
-            fig_gex.add_trace(go.Bar(
-                x=strike_labels,
-                y=active_df['Net_GEX'],
-                marker_color=colors,
-                name="Net GEX"
-            ))
-            
-            if str(spot_price) in strike_labels:
-                fig_gex.add_vline(x=str(spot_price), line_dash="dash", line_color="#ffeb3b", annotation_text="Spot Price")
-            if isinstance(gex_flip_strike, int) and str(gex_flip_strike) in strike_labels:
-                fig_gex.add_vline(x=str(gex_flip_strike), line_dash="dash", line_color="#29b6f6", annotation_text="GEX Flip")
-
-            fig_gex.update_layout(
-                title=f"Net Gamma Exposure on Exact Strike Prices ({selected_symbol})",
-                xaxis_title="Strike Price",
-                yaxis_title="Net GEX ($)",
-                xaxis=dict(type='category'),
-                template="plotly_dark",
-                height=450
-            )
-            st.plotly_chart(fig_gex, use_container_width=True)
-
-        with c_tab2:
             fig_oi = go.Figure()
             fig_oi.add_trace(go.Bar(
                 x=strike_labels,
                 y=active_df['Call_OI'],
-                name="Call OI (Resistance Wall)",
+                name="Call OI (Resistance)",
                 marker_color="#ef5350"
             ))
             fig_oi.add_trace(go.Bar(
                 x=strike_labels,
                 y=active_df['Put_OI'],
-                name="Put OI (Support Wall)",
+                name="Put OI (Support)",
                 marker_color="#26a69a"
             ))
             fig_oi.update_layout(
-                title=f"Open Interest Distribution on Strike Prices ({selected_symbol})",
+                title=f"Open Interest Distribution - ATM ±10 Strikes ({selected_symbol})",
                 xaxis_title="Strike Price",
                 yaxis_title="Open Interest (OI)",
                 xaxis=dict(type='category'),
@@ -533,11 +576,43 @@ if check_password():
                 height=450
             )
             st.plotly_chart(fig_oi, use_container_width=True)
+
+        with c_tab2:
+            fig_iv = go.Figure()
+            fig_iv.add_trace(go.Scatter(
+                x=strike_labels,
+                y=active_df['Call_IV'],
+                mode='lines+markers',
+                name="Call IV (%)",
+                line=dict(color='#ef5350', width=3),
+                marker=dict(size=8)
+            ))
+            fig_iv.add_trace(go.Scatter(
+                x=strike_labels,
+                y=active_df['Put_IV'],
+                mode='lines+markers',
+                name="Put IV (%)",
+                line=dict(color='#26a69a', width=3),
+                marker=dict(size=8)
+            ))
+            
+            if str(spot_price) in strike_labels:
+                fig_iv.add_vline(x=str(spot_price), line_dash="dash", line_color="#ffeb3b", annotation_text="Spot Price")
+
+            fig_iv.update_layout(
+                title=f"Implied Volatility (IV) Smile / Skew Curve ({selected_symbol})",
+                xaxis_title="Strike Price",
+                yaxis_title="Implied Volatility (IV %)",
+                xaxis=dict(type='category'),
+                template="plotly_dark",
+                height=450
+            )
+            st.plotly_chart(fig_iv, use_container_width=True)
     except Exception:
         pass
 
     # --------------------------------------------------------------------------
-    # H. NSE F&O STOCKS NEGATIVE GEX WATCHLIST
+    # G. NSE F&O STOCKS NEGATIVE GEX WATCHLIST
     # --------------------------------------------------------------------------
     st.markdown("---")
     st.header("🚨 F&O Stocks Negative GEX Volatility Watchlist")
@@ -553,9 +628,8 @@ if check_password():
         pass
 
     # --------------------------------------------------------------------------
-    # I. AUTO-REFRESH EXECUTION LOOP
+    # H. AUTO-REFRESH EXECUTION LOOP
     # --------------------------------------------------------------------------
     if auto_refresh:
         time.sleep(refresh_rate)
         st.rerun()
-
