@@ -488,7 +488,102 @@ hide_all_branding = """
     </script>
 """
 st.markdown(hide_all_branding, unsafe_allow_html=True)
-if 'password_correct' in st.session_state and st.session_state["password_correct"]:
-    # यहाँ नीचे आपके सारे नए सेक्शंस का कोड रहेगा
+# ==============================================================================
+# 🔒 SECURE PROTECTED SECTION (ONLY VISIBLE AFTER CORRECT PASSWORD)
+# ==============================================================================
+
+# चेक करें कि यूजर का पासवर्ड सही है या नहीं
+if st.session_state.get("password_correct", False):
+    
+    try:
+        # डेटाफ़्रेम ऑटो-डिटेक्ट करें
+        active_df = None
+        if 'df' in locals() and isinstance(df, pd.DataFrame) and not df.empty:
+            active_df = df
+        elif 'df_summary' in locals() and isinstance(df_summary, pd.DataFrame) and not df_summary.empty:
+            active_df = df_summary
+
+        if active_df is not None and not active_df.empty:
+            import numpy as np
+
+            # -------------------------------------------------------------
+            # 1. SIGMA BANDS (1-SIGMA & 2-SIGMA)
+            # -------------------------------------------------------------
+            st.markdown("---")
+            st.header("🎯 Quant Ranges & Sigma Distribution")
+            
+            spot_price = active_df['Spot_Price'].iloc[0] if 'Spot_Price' in active_df.columns else 0
+            avg_iv = active_df['IV'].mean() if 'IV' in active_df.columns else 15.0
+            dte = active_df['DTE'].iloc[0] if ('DTE' in active_df.columns and active_df['DTE'].iloc[0] > 0) else 7
+
+            if spot_price > 0:
+                sigma_1_move = spot_price * (avg_iv / 100.0) * np.sqrt(dte / 365.0)
+                sigma_2_move = sigma_1_move * 2.0
+
+                s1_lower = round(spot_price - sigma_1_move)
+                s1_upper = round(spot_price + sigma_1_move)
+                s2_lower = round(spot_price - sigma_2_move)
+                s2_upper = round(spot_price + sigma_2_move)
+
+                sc1, sc2, sc3, sc4 = st.columns(4)
+                with sc1:
+                    st.metric(label="📉 1-Sigma Lower (68%)", value=f"{s1_lower:,}")
+                with sc2:
+                    st.metric(label="📈 1-Sigma Upper (68%)", value=f"{s1_upper:,}")
+                with sc3:
+                    st.metric(label="🛡️ 2-Sigma Lower (95%)", value=f"{s2_lower:,}")
+                with sc4:
+                    st.metric(label="🚀 2-Sigma Upper (95%)", value=f"{s2_upper:,}")
+
+            # -------------------------------------------------------------
+            # 2. PCR & CALL/PUT WALLS
+            # -------------------------------------------------------------
+            st.markdown("---")
+            st.header("📊 PCR Analytics & Support/Resistance Walls")
+            
+            total_call_oi = active_df['Call_OI'].sum() if 'Call_OI' in active_df.columns else 0
+            total_put_oi = active_df['Put_OI'].sum() if 'Put_OI' in active_df.columns else 0
+            total_call_vol = active_df['Call_Volume'].sum() if 'Call_Volume' in active_df.columns else 0
+            total_put_vol = active_df['Put_Volume'].sum() if 'Put_Volume' in active_df.columns else 0
+
+            oi_pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi > 0 else 0.0
+            vol_pcr = round(total_put_vol / total_call_vol, 2) if total_call_vol > 0 else 0.0
+
+            call_wall_strike = "N/A"
+            put_wall_strike = "N/A"
+
+            strike_col = 'Strike' if 'Strike' in active_df.columns else ('Strike_Price' if 'Strike_Price' in active_df.columns else None)
+            if strike_col:
+                if 'Call_OI' in active_df.columns and not active_df['Call_OI'].isna().all():
+                    call_wall_strike = active_df.loc[active_df['Call_OI'].idxmax()][strike_col]
+                if 'Put_OI' in active_df.columns and not active_df['Put_OI'].isna().all():
+                    put_wall_strike = active_df.loc[active_df['Put_OI'].idxmax()][strike_col]
+
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            with mc1:
+                st.metric(label="📈 OI PCR", value=oi_pcr)
+            with mc2:
+                st.metric(label="⚡ Volume PCR", value=vol_pcr)
+            with mc3:
+                st.metric(label="🛡️ Put Wall (Support)", value=f"{put_wall_strike:,}" if isinstance(put_wall_strike, (int, float)) else str(put_wall_strike))
+            with mc4:
+                st.metric(label="🚧 Call Wall (Resistance)", value=f"{call_wall_strike:,}" if isinstance(call_wall_strike, (int, float)) else str(call_wall_strike))
+
+            # -------------------------------------------------------------
+            # 3. NEGATIVE GEX WATCHLIST
+            # -------------------------------------------------------------
+            st.markdown("---")
+            st.header("🚨 Negative GEX Volatility Watchlist")
+            
+            if 'Net_GEX' in active_df.columns:
+                neg_gex_df = active_df[active_df['Net_GEX'] < 0].sort_values(by='Net_GEX', ascending=True)
+                if not neg_gex_df.empty:
+                    show_cols = [c for c in ['Symbol', 'Net_GEX', 'Spot_Price', 'Max_Pain', 'PCR'] if c in neg_gex_df.columns]
+                    st.dataframe(neg_gex_df[show_cols], use_container_width=True, hide_index=True)
+                else:
+                    st.success("✅ इस समय कोई भी Index या F&O Stock Negative GEX Zone में नहीं है।")
+
+    except Exception as err:
+        pass
 
 
