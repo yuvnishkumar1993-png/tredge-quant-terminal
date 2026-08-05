@@ -41,14 +41,39 @@ def get_bse_sensex_data():
         print(f"Error fetching BSE data: {e}")
         return None
 
-# यहाँ *args और **kwargs जोड़ने से अब कभी भी आर्गुमेंट मिसमैच का एरर नहीं आएगा
+def get_mcx_commodity_data(symbol):
+    """
+    MCX (Multi Commodity Exchange) से कमोडिटी ऑप्शन चेन का डेटा फेच करने के लिए।
+    """
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/javascript, */*; q=0.01',
+        'Referer': 'https://www.mcxindia.com/',
+        'X-Requested-With': 'XMLHttpRequest'
+    }
+    try:
+        # MCX ऑफिशियल ऑप्शन चेन या मार्केटवॉच एंडपॉइंट
+        url = f"https://www.mcxindia.com/backpage.aspx/GetOptionChain?symbol={symbol.upper()}"
+        session = requests.Session()
+        session.get("https://www.mcxindia.com", headers=headers, timeout=10)
+        
+        response = session.get(url, headers=headers, timeout=10)
+        if response.status_code == 200:
+            return response.json()
+        return None
+    except Exception as e:
+        print(f"Error fetching MCX data: {e}")
+        return None
+
 def get_option_chain_data(symbol, category="NSE Indices", *args, **kwargs):
     symbol = str(symbol).upper()
     
     if category == "BSE Sensex":
         return get_bse_sensex_data()
+        
     elif category == "Commodities (MCX)":
-        return None
+        return get_mcx_commodity_data(symbol)
+        
     else:
         is_index = symbol in ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCAPNIFTY"]
         if is_index:
