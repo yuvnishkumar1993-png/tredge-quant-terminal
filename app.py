@@ -430,3 +430,17 @@ try:
 
 except Exception as e:
     pass
+# ==============================================================================
+# 🎨 HIDE GITHUB CAT ICON, MAIN MENU & STREAMLIT FOOTER
+# ==============================================================================
+hide_streamlit_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            header {visibility: hidden;}
+            footer {visibility: hidden;}
+            .stAppHeader {display: none;}
+            .stActionButton {display: none;}
+            </style>
+            """
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
