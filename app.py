@@ -300,3 +300,42 @@ if check_password():
             'GAMMA': '{:.5f}', 'CALL_THETA': '{:.2f}', 'PUT_THETA': '{:.2f}',
             'VEGA': '{:.2f}', 'NET_GEX': '{:,.2f} Cr'
         }), use_container_width=True)
+# =============================================================
+# 🚨 NEGATIVE GEX ALERT BOARD (INDICES & FNO STOCKS)
+# =============================================================
+st.markdown("---")
+st.subheader("🚨 Negative GEX Volatility Watchlist")
+st.caption("ये Assets हाई-वोलेटिलिटी / नेगेटिव गामा जोन में हैं (गिरावट या तेज स्पाइक का खतरा):")
+
+try:
+    # यदि आपके मुख्य डेटाफ़्रेम का नाम 'df' या 'df_summary' है:
+    target_df = None
+    if 'df_summary' in locals():
+        target_df = df_summary
+    elif 'df' in locals():
+        target_df = df
+        
+    if target_df is not None and not target_df.empty and 'Net_GEX' in target_df.columns:
+        # Negative GEX वाले आइटम्स को फिल्टर करें
+        neg_gex_df = target_df[target_df['Net_GEX'] < 0].sort_values(by='Net_GEX', ascending=True)
+        
+        if not neg_gex_df.empty:
+            c1, c2 = st.columns([1, 3])
+            with c1:
+                st.metric(
+                    label="Negative GEX Count", 
+                    value=f"{len(neg_gex_df)} Assets",
+                    delta="High Volatility Zone",
+                    delta_color="inverse"
+                )
+            with c2:
+                # उपलब्ध कॉलम्स के हिसाब से डिस्प्ले करें
+                show_cols = [col for col in ['Symbol', 'Net_GEX', 'Spot_Price', 'Max_Pain', 'PCR'] if col in neg_gex_df.columns]
+                st.dataframe(neg_gex_df[show_cols], use_container_width=True, hide_index=True)
+        else:
+            st.success("✅ इस समय कोई भी Index या F&O Stock Negative GEX Zone में नहीं है।")
+    else:
+        st.info("💡 मार्केट आवर्स में लाइव डेटा लोड होते ही Negative GEX स्टॉक्स की लिस्ट यहाँ खुद दिख जाएगी।")
+except Exception as e:
+    # यदि कोई कॉलम मिसिंग हो तो ऐप क्रैश न हो
+    pass
