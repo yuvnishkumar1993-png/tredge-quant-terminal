@@ -9,7 +9,6 @@ def get_nse_data(url):
     }
     try:
         session = requests.Session()
-        # एन.एस.ई. की वेबसाइट से कुकीज़ जनरेट करना
         session.get("https://www.nseindia.com", headers=headers, timeout=10)
         
         api_headers = headers.copy()
@@ -22,7 +21,7 @@ def get_nse_data(url):
         else:
             return None
     except Exception as e:
-        print(f"Error fetching original data: {e}")
+        print(f"Error fetching data: {e}")
         return None
 
 def get_option_chain_data(symbol):
