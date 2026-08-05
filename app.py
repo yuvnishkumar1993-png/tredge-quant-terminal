@@ -31,14 +31,13 @@ def main():
 
 def show_home_page():
     st.header("🏠 होम पेज")
-    st.info("साइडबार से 'लाइव एनालिसिस डैशबोर्ड' चुनें जहाँ आप NSE, BSE Sensex और MCX कमोडिटीज के विकल्प चुन सकते हैं।")
+    st.info("साइडबार से 'लाइव एनालिसिस डैशबोर्ड' चुनें।")
 
 @st.fragment(run_every=300)
 def show_analysis_page():
     st.header("📈 लाइव ऑप्शन चेन, PCR, गामा और स्ट्राइक एनालिसिस")
     st.caption("⚡ यह सेक्शन हर 5 मिनट (300 सेकंड) में लाइव डेटा के साथ ऑटो-अपडेट हो रहा है।")
     
-    # --- एक्सचेंज और कैटेगरी सेलेक्टर ---
     category = st.selectbox(
         "एक्सचेंज/मार्केट कैटेगरी चुनें",
         ["NSE Indices", "BSE Sensex", "Stock Futures (NSE F&O)", "Commodities (MCX)"]
@@ -59,7 +58,7 @@ def show_analysis_page():
             "BAJFINANCE", "SHRIRAMFIN", "MARICO", "PAYTM"
         ]
         selected_symbol = st.selectbox("स्टॉक सिंबल चुनें", symbol_list)
-    else: # Commodities (MCX)
+    else:
         symbol_list = [
             "CRUDEOIL", "ELECMBL", "GOLD10G", "NATURALGAS", "SILVER", 
             "CRUDEOILM", "NATGASMINI", "GOLD", "GOLDM", "SILVERM"
@@ -72,7 +71,6 @@ def show_analysis_page():
     symbol = selected_symbol.strip().upper()
     
     with st.spinner(f"{category} से {symbol} का डेटा फेच किया जा रहा है..."):
-        # यहाँ दोनों पैरामीटर्स (symbol और category) बिल्कुल सही तरीके से पास किए जा रहे हैं
         raw_data = get_option_chain_data(symbol, category)
         
         if raw_data:
@@ -118,12 +116,12 @@ def show_analysis_page():
                     st.warning("स्ट्राइक डेटा उपलब्ध नहीं है।")
                     
             else:
-                st.error("डेटा मिल गया लेकिन कैलकुलेशन करने में समस्या आई।")
+                st.error("डेटा मिल गया लेकिन कैलकुलेशन में समस्या आई।")
         else:
             if category == "Commodities (MCX)":
                 st.warning("⚠️ कमोडिटी (MCX) के लिए डायरेक्ट लाइव ऑप्शन चेन API एंडपॉइंट अलग होता है।")
             else:
-                st.error(f"'{symbol}' के लिए डेटा नहीं मिल पाया। (बाजार बंद होने की स्थिति में लाइव डेटा उपलब्ध नहीं होता है)।")
+                st.error(f"'{symbol}' के लिए डेटा नहीं मिल पाया।")
 
 def show_settings_page():
     st.header("⚙️ सेटिंग्स")
