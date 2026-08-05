@@ -41,9 +41,9 @@ def get_bse_sensex_data():
         print(f"Error fetching BSE data: {e}")
         return None
 
-# यह फंक्शन अब दोनों पैरामीटर (symbol और category) स्वीकार करता है
-def get_option_chain_data(symbol, category="NSE Indices"):
-    symbol = symbol.upper()
+# यहाँ *args और **kwargs जोड़ने से अब कभी भी आर्गुमेंट मिसमैच का एरर नहीं आएगा
+def get_option_chain_data(symbol, category="NSE Indices", *args, **kwargs):
+    symbol = str(symbol).upper()
     
     if category == "BSE Sensex":
         return get_bse_sensex_data()
