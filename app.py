@@ -443,4 +443,49 @@ hide_streamlit_style = """
             </style>
             """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+# ==============================================================================
+# 🎨 FORCE HIDE ALL STREAMLIT BRANDING, FOOTER & CLOUD LOGO
+# ==============================================================================
+hide_all_branding = """
+    <style>
+    /* Hide Main Menu, Header & Footer */
+    #MainMenu {visibility: hidden !important;}
+    header {visibility: hidden !important; display: none !important;}
+    footer {visibility: hidden !important; display: none !important;}
+    .stAppHeader {display: none !important;}
+    .stActionButton {display: none !important;}
+    
+    /* Hide Streamlit Cloud Badge & Watermark */
+    [data-testid="stDecoration"] {display: none !important;}
+    [data-testid="stStatusWidget"] {display: none !important;}
+    .viewerBadge_container__161ea {display: none !important;}
+    .styles_viewerBadge__1yB5g {display: none !important;}
+    div[class*="viewerBadge"] {display: none !important;}
+    div[class*="stDecoration"] {display: none !important;}
+    
+    /* Full height clean layout */
+    .stApp {
+        bottom: 0px !important;
+    }
+    </style>
+    
+    <script>
+    // Force remove footer nodes from DOM after page load
+    const removeBranding = () => {
+        const selectors = [
+            'footer',
+            'header',
+            '[data-testid="stDecoration"]',
+            '[data-testid="stStatusWidget"]',
+            'div[class*="viewerBadge"]'
+        ];
+        selectors.forEach(s => {
+            document.querySelectorAll(s).forEach(el => el.remove());
+        });
+    };
+    setTimeout(removeBranding, 1000);
+    setInterval(removeBranding, 3000);
+    </script>
+"""
+st.markdown(hide_all_branding, unsafe_allow_html=True)
 
