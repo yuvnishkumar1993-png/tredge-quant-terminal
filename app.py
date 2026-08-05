@@ -47,7 +47,6 @@ if not st.session_state["password_correct"]:
 NIFTY_LOT_SIZE = 65
 
 def calculate_bs_greeks(S, K, T, r, sigma, option_type='call'):
-    """Calculates Delta, Gamma, and Theta using Black-Scholes Model."""
     try:
         if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
             return (0.5 if option_type == 'call' else -0.5), 0.0001, 0.0
@@ -68,8 +67,7 @@ def calculate_bs_greeks(S, K, T, r, sigma, option_type='call'):
         return 0.5, 0.0001, 0.0
 
 def process_nifty_quant(df):
-    """Calculates Greeks, Call/Put GEX, Net GEX, and Absolute GEX."""
-    r = 0.07 # Risk-free rate
+    r = 0.07 
     c_gex_list, p_gex_list = [], []
     c_delta_list, p_delta_list = [], []
     c_gamma_list, p_gamma_list = [], []
@@ -111,8 +109,8 @@ def fetch_dhan_nifty(client_id, access_token):
     try:
         url = "https://api.dhan.co/v2/optionchain"
         headers = {
-            "access-token": eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiIiwiZXhwIjoxNzg2MDUyNTI0LCJpYXQiOjE3ODU5NjYxMjQsInRva2VuQ29uc3VtZXJUeXBlIjoiU0VMRiIsIndlYmhvb2tVcmwiOiIiLCJkaGFuQ2xpZW50SWQiOiIxMDAwMDA3NzUxIn0.BDU6j-n9Nc9ixHrDpRN5UZ-qmo4H3jFXTNnQrak1nStssOhYuYGTbJYBKgSntWTW_-iYUVBXVsOfsNG1CegTtw,
-            "client-id": 1000007751,
+            "access-token": access_token,
+            "client-id": client_id,
             "Content-Type": "application/json"
         }
         payload = {
@@ -156,7 +154,6 @@ def fetch_dhan_nifty(client_id, access_token):
     return None
 
 def generate_sample_nifty():
-    """Fallback sample data for testing when market is closed or API key not entered."""
     spot = 24500
     strikes = [spot + (i * 50) for i in range(-20, 21)]
     rows = []
@@ -179,7 +176,6 @@ def generate_sample_nifty():
 # ==============================================================================
 st.title("⚡ NIFTY Institutional Quant Terminal (Dhan API)")
 
-# Sidebar or Top Credentials Box
 st.subheader("🔑 Dhan API Credentials Login")
 c1, c2 = st.columns(2)
 with c1:
@@ -191,7 +187,7 @@ st.markdown("---")
 
 raw_df = None
 if dhan_id and dhan_token:
-    raw_df = fetch_dhan_data_nifty = fetch_dhan_nifty(dhan_id, dhan_token)
+    raw_df = fetch_dhan_nifty(dhan_id, dhan_token)
     if raw_df is not None:
         st.success("⚡ Connected successfully to Dhan Live NIFTY Feed!")
     else:
@@ -202,17 +198,15 @@ else:
     raw_df = generate_sample_nifty()
 
 # ==============================================================================
-# 6. CALCULATE METRICS & RENDER QUANT DASHBOARD
+# 6. RENDER QUANT DASHBOARD
 # ==============================================================================
 if raw_df is not None and not raw_df.empty:
     spot_price = raw_df['Spot_Price'].iloc[0]
     
-    # Filter ATM ±10 Strikes Range (21 Strikes)
     df_sorted = raw_df.sort_values(by='Strike').reset_index(drop=True)
     atm_idx = (df_sorted['Strike'] - spot_price).abs().idxmin()
     active_df = df_sorted.iloc[max(0, atm_idx-10):min(len(df_sorted), atm_idx+11)].reset_index(drop=True)
 
-    # Full Chain PCR
     tot_c_oi = raw_df['Call_OI'].sum()
     tot_p_oi = raw_df['Put_OI'].sum()
     tot_c_vol = raw_df['Call_Volume'].sum()
@@ -221,14 +215,12 @@ if raw_df is not None and not raw_df.empty:
     oi_pcr = round(tot_p_oi / tot_c_oi, 2) if tot_c_oi > 0 else 0.0
     vol_pcr = round(tot_p_vol / tot_c_vol, 2) if tot_c_vol > 0 else 0.0
     
-    # GEX Totals
     call_gex_tot = round(active_df['Call_GEX'].sum(), 2)
     put_gex_tot = round(active_df['Put_GEX'].sum(), 2)
     net_gex = round(active_df['Net_GEX'].sum(), 2)
     abs_net_gex = round(abs(net_gex), 2)
     abs_total_gex = round(abs(call_gex_tot) + abs(put_gex_tot), 2)
     
-    # Gamma Flip Zone
     gex_flip = "N/A"
     temp_sorted = active_df.sort_values(by='Strike').copy()
     temp_sorted['Cum_GEX'] = temp_sorted['Net_GEX'].cumsum()
@@ -236,7 +228,6 @@ if raw_df is not None and not raw_df.empty:
     if not zero_cross.empty:
         gex_flip = int(zero_cross.iloc[0]['Strike'])
 
-    # Greeks Averages & IV Skew
     avg_delta = round(active_df['Delta'].mean(), 3)
     avg_gamma = round(active_df['Gamma'].mean(), 5)
     avg_theta = round(active_df['Theta'].mean(), 2)
@@ -244,9 +235,6 @@ if raw_df is not None and not raw_df.empty:
     put_iv_avg = round(active_df['Put_IV'].mean(), 2)
     iv_skew = round(put_iv_avg - call_iv_avg, 2)
 
-    # --------------------------------------------------------------------------
-    # METRICS ROW 1: PCR & GREEKS
-    # --------------------------------------------------------------------------
     st.subheader("🛡️ NIFTY Sentiment, Greeks & GEX Overview")
     
     r1, r2, r3, r4, r5, r6 = st.columns(6)
@@ -257,9 +245,6 @@ if raw_df is not None and not raw_df.empty:
     r5.metric("Θ Theta (Avg)", avg_theta)
     r6.metric("⚡ IV Skew", f"{iv_skew}%", delta="Put Heavy" if iv_skew > 0 else "Call Heavy")
 
-    # --------------------------------------------------------------------------
-    # METRICS ROW 2: GAMMA EXPOSURE (GEX)
-    # --------------------------------------------------------------------------
     x1, x2, x3, x4, x5, x6 = st.columns(6)
     x1.metric("📈 Call Gamma ($)", f"{call_gex_tot:,}")
     x2.metric("📉 Put Gamma ($)", f"{put_gex_tot:,}")
@@ -268,9 +253,6 @@ if raw_df is not None and not raw_df.empty:
     x5.metric("🔥 Total Abs GEX", f"{abs_total_gex:,}")
     x6.metric("🔄 Gamma Flip Zone", f"{gex_flip:,}" if isinstance(gex_flip, int) else str(gex_flip))
 
-    # --------------------------------------------------------------------------
-    # SUPPORT / RESISTANCE WALLS & SPOT PLACEMENT
-    # --------------------------------------------------------------------------
     call_wall = int(active_df.loc[active_df['Call_OI'].idxmax()]['Strike'])
     put_wall = int(active_df.loc[active_df['Put_OI'].idxmax()]['Strike'])
     
@@ -295,9 +277,6 @@ if raw_df is not None and not raw_df.empty:
     w3.metric("📐 Wall Spread Range", f"{wall_gap:,} Pts")
     w4.metric("🎯 Spot Level", f"{spot_price:,}")
 
-    # --------------------------------------------------------------------------
-    # INTERACTIVE VISUAL CHARTS
-    # --------------------------------------------------------------------------
     st.markdown("---")
     st.subheader("📊 Interactive NIFTY Quant Charts")
     t1, t2, t3 = st.tabs(["🧱 Open Interest Walls", "📈 Change in OI Buildup", "⚡ IV Skew Curve"])
@@ -323,7 +302,6 @@ if raw_df is not None and not raw_df.empty:
         fig_iv.add_trace(go.Scatter(x=strike_labels, y=active_df['Call_IV'], mode='lines+markers', name="Call IV (%)", line=dict(color='#ef5350', width=2)))
         fig_iv.add_trace(go.Scatter(x=strike_labels, y=active_df['Put_IV'], mode='lines+markers', name="Put IV (%)", line=dict(color='#26a69a', width=2)))
         
-        # Spot Line Indicator (Safe Shape)
         if str(spot_price) in strike_labels:
             spot_idx = strike_labels.index(str(spot_price))
             fig_iv.add_shape(
@@ -335,9 +313,6 @@ if raw_df is not None and not raw_df.empty:
         fig_iv.update_layout(title="NIFTY Implied Volatility (IV) Smile / Skew Curve", template="plotly_dark", height=430)
         st.plotly_chart(fig_iv, use_container_width=True)
 
-    # --------------------------------------------------------------------------
-    # DETAILED QUANT TABLE
-    # --------------------------------------------------------------------------
     st.markdown("---")
     st.subheader("📋 NIFTY Strike Price Wise Detailed Analytics Table")
     display_df = active_df[['Strike', 'Call_OI', 'Call_Chg_OI', 'Call_IV', 'Put_OI', 'Put_Chg_OI', 'Put_IV', 'Delta', 'Gamma', 'Theta', 'Call_GEX', 'Put_GEX', 'Net_GEX']].copy()
