@@ -41,16 +41,14 @@ def get_bse_sensex_data():
         print(f"Error fetching BSE data: {e}")
         return None
 
-# यहाँ हमने दोनों पैरामीटर्स (symbol और category) को स्वीकार करने के लिए कोड अपडेट कर दिया है
+# यह फंक्शन अब दोनों पैरामीटर (symbol और category) स्वीकार करता है
 def get_option_chain_data(symbol, category="NSE Indices"):
     symbol = symbol.upper()
     
     if category == "BSE Sensex":
         return get_bse_sensex_data()
-        
     elif category == "Commodities (MCX)":
         return None
-        
     else:
         is_index = symbol in ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCAPNIFTY"]
         if is_index:
