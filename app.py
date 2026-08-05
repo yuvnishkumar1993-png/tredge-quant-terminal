@@ -7,7 +7,7 @@ from utils.data_fetcher import get_option_chain_data
 from utils.analytics import calculate_pcr_greeks_and_skew
 
 st.set_page_config(
-    page_title="NSE Advanced Trading Terminal",
+    page_title="NSE Live Trading Terminal",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -31,7 +31,7 @@ def main():
 
 def show_home_page():
     st.header("🏠 होम पेज")
-    st.info("साइडबार से 'लाइव एनालिसिस डैशबोर्ड' चुनें। यह डैशबोर्ड हर 5 मिनट में अपने आप ऑटो-रिफ्रेश होता है।")
+    st.info("साइडबार से 'लाइव एनालिसिस डैशबोर्ड' चुनें।")
 
 @st.fragment(run_every=300)
 def show_analysis_page():
@@ -49,14 +49,14 @@ def show_analysis_page():
 
     symbol = symbol_input.strip().upper()
     
-    with st.spinner(f"एनईएस (NSE) से {symbol} का लाइव डेटा फेच किया जा रहा है..."):
+    with st.spinner(f"एन.एस.ई. (NSE) से {symbol} का असली लाइव डेटा फेच किया जा रहा है..."):
         raw_data = get_option_chain_data(symbol)
         
         if raw_data:
             metrics = calculate_pcr_greeks_and_skew(raw_data)
             
             if metrics:
-                st.success(f"सफलतापूर्वक {symbol} का डेटा लोड हो गया है!")
+                st.success(f"सफलतापूर्वक {symbol} का लाइव डेटा लोड हो गया है!")
                 
                 st.subheader("🎯 मुख्य मार्केट लेवल्स")
                 k1, k2, k3 = st.columns(3)
@@ -97,11 +97,11 @@ def show_analysis_page():
             else:
                 st.error("डेटा मिल गया लेकिन कैलकुलेशन करने में समस्या आई।")
         else:
-            st.error(f"'{symbol}' के लिए एनईएस से डेटा नहीं मिल पाया।")
+            st.error(f"'{symbol}' के लिए एन.एस.ई. से लाइव डेटा नहीं मिल पाया। (कृपया सुनिश्चित करें कि मार्केट खुला हो या सिंबल सही हो)।")
 
 def show_settings_page():
     st.header("⚙️ सेटिंग्स")
-    st.write("ऑटो-रिफ्रेश समय वर्तमान में 5 मिनट (300 सेकंड) पर सेट है।")
+    st.write("ऑटो-रिफ्रेश समय: 5 मिनट (300 सेकंड)")
 
 if __name__ == "__main__":
     main()
