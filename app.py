@@ -44,12 +44,11 @@ def show_analysis_page():
         ["NSE Indices", "BSE Sensex", "Stock Futures (NSE F&O)", "Commodities (MCX)"]
     )
     
-    symbol_list = []
+    selected_symbol = "NIFTY"
     if category == "NSE Indices":
         symbol_list = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCAPNIFTY"]
         selected_symbol = st.selectbox("इंडेक्स चुनें", symbol_list)
     elif category == "BSE Sensex":
-        symbol_list = ["SENSEX"]
         selected_symbol = "SENSEX"
         st.info("📌 BSE Sensex सेलेक्ट किया गया है।")
     elif category == "Stock Futures (NSE F&O)":
@@ -73,6 +72,7 @@ def show_analysis_page():
     symbol = selected_symbol.strip().upper()
     
     with st.spinner(f"{category} से {symbol} का डेटा फेच किया जा रहा है..."):
+        # यहाँ दोनों पैरामीटर्स (symbol और category) बिल्कुल सही तरीके से पास किए जा रहे हैं
         raw_data = get_option_chain_data(symbol, category)
         
         if raw_data:
@@ -118,12 +118,12 @@ def show_analysis_page():
                     st.warning("स्ट्राइक डेटा उपलब्ध नहीं है।")
                     
             else:
-                st.error("डेटा मिल गया लेकिन कैलकुलेशन में समस्या आई।")
+                st.error("डेटा मिल गया लेकिन कैलकुलेशन करने में समस्या आई।")
         else:
             if category == "Commodities (MCX)":
-                st.warning("⚠️ कमोडिटी (MCX) के लिए डायरेक्ट लाइव ऑप्शन चेन API एंडपॉइंट अलग होता है। इसे अगले स्टेप में MCX के ऑफिशियल वेब राउट से जोड़ दिया जाएगा।")
+                st.warning("⚠️ कमोडिटी (MCX) के लिए डायरेक्ट लाइव ऑप्शन चेन API एंडपॉइंट अलग होता है।")
             else:
-                st.error(f"'{symbol}' के लिए डेटा नहीं मिल पाया। (बाजार बंद होने की स्थिति में डेटा उपलब्ध नहीं होता है)।")
+                st.error(f"'{symbol}' के लिए डेटा नहीं मिल पाया। (बाजार बंद होने की स्थिति में लाइव डेटा उपलब्ध नहीं होता है)।")
 
 def show_settings_page():
     st.header("⚙️ सेटिंग्स")
