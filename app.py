@@ -218,8 +218,6 @@ def parse_csv_file(uploaded, active_lot):
         return compute_institutional_gex(data_df, "CUSTOM_CSV", active_lot)
     except Exception:
         return None
-
-
 def generate_sample_option_chain(symbol, active_lot):
     """Generates realistic sample data when market is closed and no file uploaded."""
     spot = 24500 if "NIFTY" in symbol else (78500 if "SENSEX" in symbol else 3000)
@@ -357,9 +355,7 @@ if raw_df is not None and not raw_df.empty:
     if not zero_cross.empty:
         gex_flip = int(zero_cross.iloc[0]['Strike'])
 
-    # --------------------------------------------------------------------------
     # METRICS SECTION 1: PCR, GREEKS & GEX BREAKDOWN
-    # --------------------------------------------------------------------------
     st.markdown("---")
     st.subheader("🛡️ Market PCR, Option Greeks & Gamma Exposure (GEX)")
     
@@ -386,9 +382,7 @@ if raw_df is not None and not raw_df.empty:
     x5.metric("🔥 Total Abs GEX", f"{abs_total_gex:,}")
     x6.metric("🔄 Gamma Flip Zone", f"{gex_flip:,}" if isinstance(gex_flip, int) else str(gex_flip))
 
-    # --------------------------------------------------------------------------
     # METRICS SECTION 2: WALL ANALYTICS & SPOT RELATION
-    # --------------------------------------------------------------------------
     call_wall = int(active_df.loc[active_df['Call_OI'].idxmax()]['Strike'])
     put_wall = int(active_df.loc[active_df['Put_OI'].idxmax()]['Strike'])
     
@@ -413,9 +407,7 @@ if raw_df is not None and not raw_df.empty:
     w3.metric("📐 Wall Range Spread", f"{wall_gap:,} Pts")
     w4.metric("🎯 Active Spot Level", f"{spot_price:,}")
 
-    # --------------------------------------------------------------------------
     # VISUAL CHARTS: OI WALLS, OI CHANGE & IV SKEW
-    # --------------------------------------------------------------------------
     st.markdown("---")
     st.subheader("📊 Interactive Visual Charts")
     t1, t2, t3 = st.tabs(["🧱 Open Interest Walls", "📈 Change in OI (Buildup)", "⚡ IV Skew Curve"])
@@ -427,4 +419,37 @@ if raw_df is not None and not raw_df.empty:
         fig_oi.add_trace(go.Bar(x=strike_labels, y=active_df['Call_OI'], name="Call OI (Resistance)", marker_color="#ef5350"))
         fig_oi.add_trace(go.Bar(x=strike_labels, y=active_df['Put_OI'], name="Put OI (Support)", marker_color="#26a69a"))
         fig_oi.update_layout(title="Open Interest Distribution (ATM ±10 Strikes)", barmode='group', template="plotly_dark", height=450)
-        st.plotly_chart(fig_oi, 
+        st.plotly_chart(fig_oi, use_container_width=True)
+
+    with t2:
+        fig_chg = go.Figure()
+        fig_chg.add_trace(go.Bar(x=strike_labels, y=active_df['Call_Chg_OI'], name="Call OI Increase/Change", marker_color="#ff1744"))
+        fig_chg.add_trace(go.Bar(x=strike_labels, y=active_df['Put_Chg_OI'], name="Put OI Increase/Change", marker_color="#00e676"))
+        fig_chg.update_layout(title="Intraday Change in Open Interest (OI Increase / Unwinding)", barmode='group', template="plotly_dark", height=450)
+        st.plotly_chart(fig_chg, use_container_width=True)
+
+    with t3:
+        fig_iv = go.Figure()
+        fig_iv.add_trace(go.Scatter(x=strike_labels, y=active_df['Call_IV'], mode='lines+markers', name="Call IV (%)", line=dict(color='#ef5350', width=3)))
+        fig_iv.add_trace(go.Scatter(x=strike_labels, y=active_df['Put_IV'], mode='lines+markers', name="Put IV (%)", line=dict(color='#26a69a', width=3)))
+        if str(spot_price) in strike_labels:
+            fig_iv.add_vline(x=str(spot_price), line_dash="dash", line_color="#ffeb3b", annotation_text="Spot Price")
+        fig_iv.update_layout(title="Implied Volatility (IV) Smile / Skew Curve", template="plotly_dark", height=450)
+        st.plotly_chart(fig_iv, use_container_width=True)
+
+    # DETAILED DATA TABLE
+    st.markdown("---")
+    st.subheader("📋 Strike Price Wise Detailed Analytics Table")
+    display_df = active_df[['Strike', 'Call_OI', 'Call_Chg_OI', 'Call_IV', 'Put_OI', 'Put_Chg_OI', 'Put_IV', 'Delta', 'Gamma', 'Theta', 'Call_GEX', 'Put_GEX', 'Net_GEX']].copy()
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+    # NEGATIVE GAMMA STOCKS WATCHLIST
+    st.markdown("---")
+    st.subheader("🚨 F&O Stocks Negative Gamma Volatility Watchlist")
+    st.caption("NSE F&O स्टॉक्स जो इस समय Negative Gamma Zone में हैं (High Risk / Big Move Potential):")
+    
+    neg_gex_df = generate_negative_gamma_watchlist()
+    if not neg_gex_df.empty:
+        st.dataframe(neg_gex_df, use_container_width=True, hide_index=True)
+    else:
+        st.success("✅ इस समय किसी भी F&O स्टॉक में Negative Gamma Volatility सिग्नल नहीं है।")
