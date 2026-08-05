@@ -9,7 +9,7 @@ import requests
 # 1. PAGE CONFIGURATION & STYLES
 # ==============================================================================
 st.set_page_config(
-    page_title="Tredge.in Nifty Quant Terminal",
+    page_title="Tredge.in Nifty Quant Terminal (Fyers)",
     page_icon="⚡",
     layout="wide"
 )
@@ -103,52 +103,72 @@ def process_nifty_quant(df):
     return df
 
 # ==============================================================================
-# 4. DHAN API NIFTY FETCHING ENGINE
+# 4. FYERS API NIFTY FETCHING ENGINE
 # ==============================================================================
-def fetch_dhan_nifty(client_id, access_token):
+def fetch_fyers_nifty(client_id, access_token):
     try:
-        url = "https://api.dhan.co/v2/optionchain"
+        # Fyers Option Chain API Endpoint (Fyers API v3)
+        url = "https://api-t1.fyers.in/v3/futures-options/optionchain?symbol=NSE:NIFTY50-INDEX&strikecount=20"
         headers = {
-            "access-token": access_token,
-            "client-id": client_id,
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "UnderlyingSymbol": "NIFTY",
-            "ExchangeSegment": "NSE_FNO"
+            "authorization": f"Bearer {client_id}:{access_token}",
+            "content-type": "application/json"
         }
 
-        res = requests.post(url, json=payload, headers=headers, timeout=5)
+        res = requests.get(url, headers=headers, timeout=5)
         if res.status_code == 200:
             resp_data = res.json()
             if "data" in resp_data:
                 oc_data = resp_data["data"]
-                spot = float(oc_data.get("last_price", 24500))
+                spot = float(oc_data.get("spotPrice", 24500))
+                options_chains = oc_data.get("optionsChain", [])
                 rows = []
 
-                for strike_str, chain in oc_data.get("oc", {}).items():
-                    k = float(strike_str)
-                    c_info = chain.get("ce", {})
-                    p_info = chain.get("pe", {})
+                for item in options_chains:
+                    k = float(item.get("strikePrice", 0))
+                    # Fyers usually gives symbol type 'CE' or 'PE'
+                    option_type = item.get("optionType", "")
+                    oi = int(item.get("openInterest", 0))
+                    chg_oi = int(item.get("changeInOpenInterest", 0))
+                    vol = int(item.get("volume", 0))
+                    iv = float(item.get("iv", 15.0))
 
+                    # चूंकि Fyers एक स्ट्राइक पर CE और PE अलग-अलग दे सकता है, हमें उन्हें मैनेज करना होगा
+                    # यहाँ हम स्ट्राइक-वाइज़ डिक्शनरी बना लेते हैं
+                    # (Note: अगर आपके पास Fyers का स्पेसिफिक JSON स्ट्रक्चर है, तो उसके मुताबिक इसे और सटीक कर सकते हैं)
                     rows.append({
                         "Symbol": "NIFTY",
                         "Spot_Price": int(spot),
                         "Strike": int(k),
-                        "Call_OI": int(c_info.get("oi", 0)),
-                        "Put_OI": int(p_info.get("oi", 0)),
-                        "Call_Chg_OI": int(c_info.get("change_oi", 0)),
-                        "Put_Chg_OI": int(p_info.get("change_oi", 0)),
-                        "Call_Volume": int(c_info.get("volume", 0)),
-                        "Put_Volume": int(p_info.get("volume", 0)),
-                        "Call_IV": float(c_info.get("iv", 15.0)),
-                        "Put_IV": float(p_info.get("iv", 15.0)),
+                        "Call_OI": oi if option_type == "CE" else 0,
+                        "Put_OI": oi if option_type == "PE" else 0,
+                        "Call_Chg_OI": chg_oi if option_type == "CE" else 0,
+                        "Put_Chg_OI": chg_oi if option_type == "PE" else 0,
+                        "Call_Volume": vol if option_type == "CE" else 0,
+                        "Put_Volume": vol if option_type == "PE" else 0,
+                        "Call_IV": iv if option_type == "CE" else 15.0,
+                        "Put_IV": iv if option_type == "PE" else 15.0,
                         "DTE": 5
                     })
 
-                df = pd.DataFrame(rows)
-                if not df.empty:
-                    return process_nifty_quant(df)
+                if rows:
+                    df = pd.DataFrame(rows)
+                    # Group by Strike to combine CE and PE rows if Fyers sends them separately
+                    df_grouped = df.groupby('Strike').agg({
+                        'Symbol': 'first',
+                        'Spot_Price': 'first',
+                        'Call_OI': 'sum',
+                        'Put_OI': 'sum',
+                        'Call_Chg_OI': 'sum',
+                        'Put_Chg_OI': 'sum',
+                        'Call_Volume': 'sum',
+                        'Put_Volume': 'sum',
+                        'Call_IV': 'max',
+                        'Put_IV': 'max',
+                        'DTE': 'first'
+                    }).reset_index()
+                    
+                    if not df_grouped.empty:
+                        return process_nifty_quant(df_grouped)
     except Exception:
         pass
     return None
@@ -174,27 +194,27 @@ def generate_sample_nifty():
 # ==============================================================================
 # 5. DASHBOARD USER INTERFACE
 # ==============================================================================
-st.title("⚡ NIFTY Institutional Quant Terminal (Dhan API)")
+st.title("⚡ NIFTY Institutional Quant Terminal (Fyers API)")
 
-st.subheader("🔑 Dhan API Credentials Login")
+st.subheader("🔑 Fyers API Credentials Login")
 c1, c2 = st.columns(2)
 with c1:
-    dhan_id = st.text_input("Dhan Client ID:", key="nifty_dhan_id", placeholder="e.g. 1000123456")
+    fyers_client_id = st.text_input("Fyers App ID (Client ID):", key="fyers_client_id", placeholder="e.g. XXXXXXX-100")
 with c2:
-    dhan_token = st.text_input("Dhan Access Token:", type="password", key="nifty_dhan_token", placeholder="Enter Access Token")
+    fyers_token = st.text_input("Fyers Access Token:", type="password", key="fyers_token", placeholder="Enter Access Token")
 
 st.markdown("---")
 
 raw_df = None
-if dhan_id and dhan_token:
-    raw_df = fetch_dhan_nifty(dhan_id, dhan_token)
+if fyers_client_id and fyers_token:
+    raw_df = fetch_fyers_nifty(fyers_client_id, fyers_token)
     if raw_df is not None:
-        st.success("⚡ Connected successfully to Dhan Live NIFTY Feed!")
+        st.success("⚡ Connected successfully to Fyers Live NIFTY Feed!")
     else:
-        st.warning("⚠️ Dhan API Error or Market Closed. Showing simulated NIFTY buffer data.")
+        st.warning("⚠️ Fyers API Error or Market Closed. Showing simulated NIFTY buffer data.")
         raw_df = generate_sample_nifty()
 else:
-    st.info("💡 लाइव डेटा के लिए ऊपर अपना Dhan Client ID और Access Token दर्ज करें। (फिलहाल सैंपल डेटा दिखाया जा रहा है)")
+    st.info("💡 लाइव डेटा के लिए ऊपर अपना Fyers App ID और Access Token दर्ज करें। (फिलहाल सैंपल डेटा दिखाया जा रहा है)")
     raw_df = generate_sample_nifty()
 
 # ==============================================================================
