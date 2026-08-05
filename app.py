@@ -339,3 +339,94 @@ try:
 except Exception as e:
     # यदि कोई कॉलम मिसिंग हो तो ऐप क्रैश न हो
     pass
+    # ==============================================================================
+# 🎯 QUANT DASHBOARD: SIGMA BANDS (1σ / 2σ), PCR & WALLS ANALYTICS
+# ==============================================================================
+st.markdown("---")
+st.header("🎯 Quant Ranges, Sigma Distribution & Key Levels")
+st.caption("1-Sigma (68% Prob) & 2-Sigma (95% Prob) Expected Settlement Ranges")
+
+try:
+    # active_df डिटेक्ट करें
+    active_df = None
+    if 'df' in locals() and not df.empty:
+        active_df = df
+    elif 'df_summary' in locals() and not df_summary.empty:
+        active_df = df_summary
+
+    if active_df is not None and not active_df.empty:
+        import numpy as np
+
+        # -------------------------------------------------------------
+        # 1. Spot Price, IV & Days to Expiry Data
+        # -------------------------------------------------------------
+        spot_price = active_df['Spot_Price'].iloc[0] if 'Spot_Price' in active_df.columns else 0
+        avg_iv = active_df['IV'].mean() if 'IV' in active_df.columns else 15.0 # default 15% if missing
+        
+        # Days to Expiry (DTE) Calculation (default 7 days if not present)
+        dte = active_df['DTE'].iloc[0] if 'DTE' in active_df.columns and active_df['DTE'].iloc[0] > 0 else 7
+        
+        # -------------------------------------------------------------
+        # 2. Sigma Calculation (1-Sigma & 2-Sigma Moves)
+        # -------------------------------------------------------------
+        if spot_price > 0:
+            # Expected Move formula = Spot * (IV/100) * sqrt(DTE / 365)
+            sigma_1_move = spot_price * (avg_iv / 100.0) * np.sqrt(dte / 365.0)
+            sigma_2_move = sigma_1_move * 2.0
+
+            s1_lower = round(spot_price - sigma_1_move)
+            s1_upper = round(spot_price + sigma_1_move)
+            s2_lower = round(spot_price - sigma_2_move)
+            s2_upper = round(spot_price + sigma_2_move)
+
+            # UI Display for Sigma Distribution
+            st.subheader("📊 IV Normal Distribution Expected Ranges")
+            sc1, sc2, sc3, sc4 = st.columns(4)
+
+            with sc1:
+                st.metric(label="📉 1-Sigma Lower (68%)", value=f"{s1_lower:,}", delta=f"-{round(sigma_1_move)}")
+            with sc2:
+                st.metric(label="📈 1-Sigma Upper (68%)", value=f"{s1_upper:,}", delta=f"+{round(sigma_1_move)}")
+            with sc3:
+                st.metric(label="🛡️ 2-Sigma Lower (95%)", value=f"{s2_lower:,}", delta=f"-{round(sigma_2_move)}", delta_color="inverse")
+            with sc4:
+                st.metric(label="🚀 2-Sigma Upper (95%)", value=f"{s2_upper:,}", delta=f"+{round(sigma_2_move)}")
+
+        # -------------------------------------------------------------
+        # 3. PCR & Walls Analytics
+        # -------------------------------------------------------------
+        st.subheader("📊 PCR & Support/Resistance Walls")
+        total_call_oi = active_df['Call_OI'].sum() if 'Call_OI' in active_df.columns else 0
+        total_put_oi = active_df['Put_OI'].sum() if 'Put_OI' in active_df.columns else 0
+        
+        total_call_vol = active_df['Call_Volume'].sum() if 'Call_Volume' in active_df.columns else 0
+        total_put_vol = active_df['Put_Volume'].sum() if 'Put_Volume' in active_df.columns else 0
+
+        oi_pcr = round(total_put_oi / total_call_oi, 2) if total_call_oi > 0 else 0.0
+        vol_pcr = round(total_put_vol / total_call_vol, 2) if total_call_vol > 0 else 0.0
+
+        call_wall_strike = "N/A"
+        put_wall_strike = "N/A"
+
+        if 'Strike' in active_df.columns or 'Strike_Price' in active_df.columns:
+            strike_col = 'Strike' if 'Strike' in active_df.columns else 'Strike_Price'
+            if 'Call_OI' in active_df.columns and not active_df['Call_OI'].isna().all():
+                call_wall_strike = active_df.loc[active_df['Call_OI'].idxmax()][strike_col]
+            if 'Put_OI' in active_df.columns and not active_df['Put_OI'].isna().all():
+                put_wall_strike = active_df.loc[active_df['Put_OI'].idxmax()][strike_col]
+
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        with mc1:
+            st.metric(label="📈 OI PCR", value=oi_pcr, delta="Bullish" if oi_pcr >= 1.0 else "Bearish")
+        with mc2:
+            st.metric(label="⚡ Volume PCR", value=vol_pcr, delta="Buying" if vol_pcr >= 1.0 else "Selling")
+        with mc3:
+            st.metric(label="🛡️ Put Wall (Support)", value=f"{put_wall_strike:,}" if isinstance(put_wall_strike, (int, float)) else str(put_wall_strike))
+        with mc4:
+            st.metric(label="🚧 Call Wall (Resistance)", value=f"{call_wall_strike:,}" if isinstance(call_wall_strike, (int, float)) else str(call_wall_strike))
+
+    else:
+        st.info("💡 लाइव मार्केट में डाटा लोड होते ही 1-Sigma, 2-Sigma, PCR और Call/Put Walls का गणित यहाँ अपडेट हो जाएगा।")
+
+except Exception as e:
+    pass
