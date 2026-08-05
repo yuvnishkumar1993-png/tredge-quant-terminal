@@ -301,3 +301,10 @@ if raw_df is not None and not raw_df.empty:
 
 else:
     st.warning("⚠️ Data Source Not Connected / Market Closed. Choose another Mode or Upload CSV.")
+fig_iv.add_vline(
+    x=float(spot_price),  # Pass as float/int instead of str
+    line_dash="dash",
+    line_color="#ffeb3b",
+    annotation_text="Spot Price",
+)
+
