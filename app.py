@@ -432,8 +432,16 @@ if raw_df is not None and not raw_df.empty:
         fig_iv = go.Figure()
         fig_iv.add_trace(go.Scatter(x=strike_labels, y=active_df['Call_IV'], mode='lines+markers', name="Call IV (%)", line=dict(color='#ef5350', width=3)))
         fig_iv.add_trace(go.Scatter(x=strike_labels, y=active_df['Put_IV'], mode='lines+markers', name="Put IV (%)", line=dict(color='#26a69a', width=3)))
+        
+        # Spot Line Fix: Safe Addition without add_vline error
         if str(spot_price) in strike_labels:
-            fig_iv.add_vline(x=str(spot_price), line_dash="dash", line_color="#ffeb3b", annotation_text="Spot Price")
+            spot_idx = strike_labels.index(str(spot_price))
+            fig_iv.add_shape(
+                type="line", x0=spot_idx, x1=spot_idx, y0=0, y1=1,
+                xref="x", yref="paper",
+                line=dict(color="#ffeb3b", width=2, dash="dash")
+            )
+            
         fig_iv.update_layout(title="Implied Volatility (IV) Smile / Skew Curve", template="plotly_dark", height=450)
         st.plotly_chart(fig_iv, use_container_width=True)
 
