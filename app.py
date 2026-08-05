@@ -63,36 +63,42 @@ if check_password():
     st.caption("Real-Time Option Greeks, Net GEX, Flip Levels, Sigma Ranges, Visual Charts & Wall Analytics Engine")
     
     # --------------------------------------------------------------------------
-    # A. SIDEBAR: ASSET SELECTOR
+    # A. MAIN SCREEN ASSET SELECTOR (MOBILE FRIENDLY - FRONT & CENTER)
     # --------------------------------------------------------------------------
-    st.sidebar.header("🎯 Asset Selector")
+    st.markdown("---")
+    st.subheader("🎯 Select Index / Stock")
     
-    asset_category = st.sidebar.radio(
-        "Category:",
-        ["NSE Indices", "BSE Indices", "NSE F&O Stocks"]
-    )
+    sel_col1, sel_col2 = st.columns([1, 2])
+    
+    with sel_col1:
+        asset_category = st.radio(
+            "Select Market Category:",
+            ["NSE Indices", "BSE Indices", "NSE F&O Stocks"],
+            horizontal=True
+        )
     
     selected_symbol = "NIFTY"
     
-    if asset_category == "NSE Indices":
-        selected_symbol = st.sidebar.selectbox(
-            "Select NSE Index:",
-            ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNEXT50"]
-        )
-    elif asset_category == "BSE Indices":
-        selected_symbol = st.sidebar.selectbox(
-            "Select BSE Index:",
-            ["SENSEX", "BANKEX"]
-        )
-    else:
-        fno_stocks = [
-            "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", 
-            "BHARTIARTL", "ITC", "KOTAKBANK", "LT", "AXISBANK", "TATAMOTORS",
-            "TATASTEEL", "MARUTI", "BAJFINANCE", "HINDUNILVR"
-        ]
-        selected_symbol = st.sidebar.selectbox("Select F&O Stock:", sorted(fno_stocks))
-        
-    st.sidebar.success(f"Active Asset: **{selected_symbol}**")
+    with sel_col2:
+        if asset_category == "NSE Indices":
+            selected_symbol = st.selectbox(
+                "Choose NSE Index:",
+                ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNEXT50"]
+            )
+        elif asset_category == "BSE Indices":
+            selected_symbol = st.selectbox(
+                "Choose BSE Index:",
+                ["SENSEX", "BANKEX"]
+            )
+        else:
+            fno_stocks = [
+                "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "SBIN", 
+                "BHARTIARTL", "ITC", "KOTAKBANK", "LT", "AXISBANK", "TATAMOTORS",
+                "TATASTEEL", "MARUTI", "BAJFINANCE", "HINDUNILVR"
+            ]
+            selected_symbol = st.selectbox("Choose F&O Stock:", sorted(fno_stocks))
+            
+    st.success(f"📌 Active Asset Selected: **{selected_symbol}** ({asset_category})")
     
     # --------------------------------------------------------------------------
     # B. DATA FETCHING PLACEHOLDER
@@ -100,13 +106,11 @@ if check_password():
     df = pd.DataFrame() 
     active_df = df if isinstance(df, pd.DataFrame) and not df.empty else None
 
-    st.info(f"📊 Analytics Dashboard for: **{selected_symbol}** ({asset_category})")
-    
     if active_df is None or active_df.empty:
         st.warning("⚠️ Exchange API temporarily offline / Non-Market Hours. Live calculations for " + selected_symbol + " will activate automatically at 09:15 AM IST.")
 
     # --------------------------------------------------------------------------
-    # C. OPTION GREEKS & IV SKEW (DATA CARDS)
+    # C. OPTION GREEKS & IV SKEW
     # --------------------------------------------------------------------------
     st.markdown("---")
     st.header("📈 Option Greeks & Implied Volatility (IV) Skew")
@@ -263,7 +267,6 @@ if check_password():
             
             c_tab1, c_tab2 = st.tabs(["⚡ Net GEX Profile Chart", "🧱 Open Interest Walls Chart"])
 
-            # Chart 1: Net GEX Profile
             with c_tab1:
                 if strike_col and 'Net_GEX' in active_df.columns:
                     fig_gex = go.Figure()
@@ -283,7 +286,6 @@ if check_password():
                     )
                     st.plotly_chart(fig_gex, use_container_width=True)
 
-            # Chart 2: Call vs Put OI Walls
             with c_tab2:
                 if strike_col and 'Call_OI' in active_df.columns and 'Put_OI' in active_df.columns:
                     fig_oi = go.Figure()
