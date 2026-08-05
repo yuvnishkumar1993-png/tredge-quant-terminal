@@ -7,14 +7,14 @@ from utils.data_fetcher import get_option_chain_data
 from utils.analytics import calculate_pcr_greeks_and_skew
 
 st.set_page_config(
-    page_title="NSE Live Trading Terminal",
+    page_title="Multi-Exchange Trading Terminal",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 def main():
-    st.title("📊 एडवांस्ड स्टॉक, इंडेक्स और कमोडिटी PCR टर्मिनल")
+    st.title("📊 मल्टी-एक्सचेंज (NSE, BSE Sensex & MCX) PCR टर्मिनल")
     
     st.sidebar.title("नेविगेशन मेनू")
     app_mode = st.sidebar.selectbox(
@@ -31,53 +31,55 @@ def main():
 
 def show_home_page():
     st.header("🏠 होम पेज")
-    st.info("साइडबार से 'लाइव एनालिसिस डैशबोर्ड' चुनें जहाँ आपको इंडेक्स, स्टॉक फ्यूचर्स और कमोडिटीज के लिए ड्रॉपडाउन सेलेक्टर मिलेगा।")
+    st.info("साइडबार से 'लाइव एनालिसिस डैशबोर्ड' चुनें जहाँ आप NSE, BSE Sensex और MCX कमोडिटीज के विकल्प चुन सकते हैं।")
 
 @st.fragment(run_every=300)
 def show_analysis_page():
     st.header("📈 लाइव ऑप्शन चेन, PCR, गामा और स्ट्राइक एनालिसिस")
     st.caption("⚡ यह सेक्शन हर 5 मिनट (300 सेकंड) में लाइव डेटा के साथ ऑटो-अपडेट हो रहा है।")
     
-    # --- कैटेगराइज्ड ड्रॉपडाउन सेलेक्टर ---
+    # --- एक्सचेंज और कैटेगरी सेलेक्टर ---
     category = st.selectbox(
-        "एसेट कैटेगरी चुनें (Asset Category)",
-        ["NSE Indices", "Stock Futures (F&O)", "Commodities (MCX/COM)"]
+        "एक्सचेंज/मार्केट कैटेगरी चुनें",
+        ["NSE Indices", "BSE Sensex", "Stock Futures (NSE F&O)", "Commodities (MCX)"]
     )
     
     symbol_list = []
     if category == "NSE Indices":
         symbol_list = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCAPNIFTY"]
-    elif category == "Stock Futures (F&O)":
+        selected_symbol = st.selectbox("इंडेक्स चुनें", symbol_list)
+    elif category == "BSE Sensex":
+        symbol_list = ["SENSEX"]
+        selected_symbol = "SENSEX"
+        st.info("📌 BSE Sensex सेलेक्ट किया गया है।")
+    elif category == "Stock Futures (NSE F&O)":
         symbol_list = [
             "HDFCBANK", "BSE", "RELIANCE", "MCX", "INFY", "BHARTIARTL", 
             "HINDALCO", "SBIN", "KALYANKJIL", "PNBHOUSING", "HINDZINC", 
             "JIOFIN", "CUMMINSIND", "LT", "NYKAA", "ICICIBANK", 
             "BAJFINANCE", "SHRIRAMFIN", "MARICO", "PAYTM"
         ]
-    else: # Commodities
+        selected_symbol = st.selectbox("स्टॉक सिंबल चुनें", symbol_list)
+    else: # Commodities (MCX)
         symbol_list = [
             "CRUDEOIL", "ELECMBL", "GOLD10G", "NATURALGAS", "SILVER", 
             "CRUDEOILM", "NATGASMINI", "GOLD", "GOLDM", "SILVERM"
         ]
+        selected_symbol = st.selectbox("कमोडिटी सिंबल चुनें (MCX)", symbol_list)
     
-    c1, c2 = st.columns([2, 1])
-    with c1:
-        selected_symbol = st.selectbox("सिंबल चुनें (Select Symbol)", symbol_list)
-    with c2:
-        st.write("") 
-        st.write("")
-        fetch_button = st.button("तुरंत डेटा रिफ्रेश करें", type="primary")
+    if st.button("तुरंत डेटा रिफ्रेश करें", type="primary"):
+        st.rerun()
 
     symbol = selected_symbol.strip().upper()
     
-    with st.spinner(f"एन.एस.ई. (NSE) से {symbol} का लाइव डेटा फेच किया जा रहा है..."):
-        raw_data = get_option_chain_data(symbol)
+    with st.spinner(f"{category} से {symbol} का डेटा फेच किया जा रहा है..."):
+        raw_data = get_option_chain_data(symbol, category)
         
         if raw_data:
             metrics = calculate_pcr_greeks_and_skew(raw_data)
             
             if metrics:
-                st.success(f"सफलतापूर्वक {symbol} का लाइव डेटा लोड हो गया है!")
+                st.success(f"सफलतापूर्वक {symbol} का डेटा लोड हो गया है!")
                 
                 st.subheader("🎯 मुख्य मार्केट लेवल्स")
                 k1, k2, k3 = st.columns(3)
@@ -116,9 +118,12 @@ def show_analysis_page():
                     st.warning("स्ट्राइक डेटा उपलब्ध नहीं है।")
                     
             else:
-                st.error("डेटा मिल गया लेकिन कैलकुलेशन करने में समस्या आई।")
+                st.error("डेटा मिल गया लेकिन कैलकुलेशन में समस्या आई।")
         else:
-            st.error(f"'{symbol}' के लिए एन.एस.ई. से लाइव डेटा नहीं मिल पाया। (ध्यान दें: कमोडिटी कॉन्ट्रैक्ट्स MCX पर ट्रेड होते हैं, जिन्हें NSE ऑप्शन चेन API सपोर्ट नहीं करता; कृपया NSE Indices या Stock Futures चुनें)।")
+            if category == "Commodities (MCX)":
+                st.warning("⚠️ कमोडिटी (MCX) के लिए डायरेक्ट लाइव ऑप्शन चेन API एंडपॉइंट अलग होता है। इसे अगले स्टेप में MCX के ऑफिशियल वेब राउट से जोड़ दिया जाएगा।")
+            else:
+                st.error(f"'{symbol}' के लिए डेटा नहीं मिल पाया। (बाजार बंद होने की स्थिति में डेटा उपलब्ध नहीं होता है)।")
 
 def show_settings_page():
     st.header("⚙️ सेटिंग्स")
