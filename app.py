@@ -56,21 +56,21 @@ def check_password():
 
 
 # ==============================================================================
-# 3. HELPER: PARSE UPLOADED NSE/BSE CSV OPTION CHAIN FILES
+# 3. HELPER: PARSE UPLOADED NSE/BSE CSV OPTION CHAIN FILES (FIXED)
 # ==============================================================================
 def parse_uploaded_csv(uploaded_file, symbol):
-    """Parses both BSE & NSE Option Chain CSV files seamlessly."""
+    """Parses both BSE & NSE Option Chain CSV files seamlessly with robust type conversion."""
     try:
         df_raw = pd.read_csv(uploaded_file, header=None)
         
-        # Check for BSE / NSE Header Pattern
-        first_few_str = " ".join(df_raw.astype(str).values.flatten()[:100]).upper()
+        # Safely convert raw values to strings to prevent float/str join errors
+        first_100_str = " ".join([str(x) for x in df_raw.values.flatten()[:100]]).upper()
         
-        if "STRIKE PRICE" in first_few_str:
+        if "STRIKE PRICE" in first_100_str or "CALLS" in first_100_str:
             header_idx = 1
             for idx, row in df_raw.iterrows():
-                row_str = " ".join(row.astype(str).values).upper()
-                if "STRIKE PRICE" in row_str and "BID QTY" in row_str:
+                row_str = " ".join([str(x) for x in row.values]).upper()
+                if "STRIKE PRICE" in row_str and ("BID QTY" in row_str or "CALLS" in row_str or "OI" in row_str):
                     header_idx = idx
                     break
                     
@@ -99,10 +99,10 @@ def parse_uploaded_csv(uploaded_file, symbol):
             data_df['Gamma'] = 0.0015
             data_df['Theta'] = -12.5
             
-            # GEX Formula
-            data_df['Call_GEX'] = round((data_df['Call_OI'] * 0.002) * (data_df['Strike'] >= spot).astype(int) + 0.5, 2)
-            data_df['Put_GEX'] = round((-data_df['Put_OI'] * 0.002) * (data_df['Strike'] <= spot).astype(int) - 0.5, 2)
-            data_df['Net_GEX'] = round(data_df['Call_GEX'] + data_df['Put_GEX'], 2)
+            # GEX Calculations
+            data_df['Call_GEX'] = ((data_df['Call_OI'] * 0.002) * (data_df['Strike'] >= spot).astype(int) + 0.5).round(2)
+            data_df['Put_GEX'] = ((-data_df['Put_OI'] * 0.002) * (data_df['Strike'] <= spot).astype(int) - 0.5).round(2)
+            data_df['Net_GEX'] = (data_df['Call_GEX'] + data_df['Put_GEX']).round(2)
             
             # Max Pain Strike
             max_pain_idx = (data_df['Call_OI'] + data_df['Put_OI']).idxmax()
@@ -200,8 +200,9 @@ if check_password():
     # B. DATA ENGINE ROUTING (LOAD FILE OR DEMO)
     # --------------------------------------------------------------------------
     if uploaded_csv is not None:
-        active_df = parse_uploaded_csv(uploaded_csv, selected_symbol)
-        if active_df is not None:
+        parsed_df = parse_uploaded_csv(uploaded_csv, selected_symbol)
+        if parsed_df is not None and not parsed_df.empty:
+            active_df = parsed_df
             st.success(f"✅ Loaded closing data from CSV file for **{selected_symbol}**")
         else:
             active_df = generate_sample_option_chain(selected_symbol)
