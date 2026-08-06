@@ -51,30 +51,33 @@ def get_dhan_option_chain_data(symbol, category):
     return None
 
 def get_realistic_mock_data(symbol, current_spot=24650.0):
-    """स्पॉट के ऊपर और नीचे की सभी स्ट्राइक्स (24700 से ऊपर की भी) दिखाने के लिए वाइड रेंज जनरेट करता है।"""
+    """नजदीकी स्पॉट के नीचे और ऊपर के सभी स्ट्राइक प्राइसेस (71 स्ट्राइक्स की वाइड रेंज) का पूरा डेटा जनरेट करता है।"""
     spot = current_spot
     mock_data = []
     
     step = 50 if "NIFTY" in symbol.upper() else (100 if "SENSEX" in symbol.upper() else 10)
     base_strike = round(spot / step) * step
     
-    for i in range(-15, 16):
+    # रेंज को -35 से +36 कर दिया है ताकि सभी स्ट्राइक्स (नीचे से ऊपर तक) कवर हो जाएं
+    for i in range(-35, 36):
         strike = float(base_strike + (i * step))
         dist = abs(i)
+        
+        # रियलिस्टिक ओपन इंटरेस्ट और वॉल्यूम डिस्ट्रीब्यूशन ताकि PCR और Max Pain सटीक आएं
         mock_data.append({
             "strikePrice": strike,
             "expiryDate": "27-Aug-2026",
             "CE": {
-                "openInterest": int(50000 + max(0, (15 - dist)) * 5000),
-                "changeinOpenInterest": int(500 * (16 - dist)),
-                "totalTradedVolume": int(150000 + max(0, (15 - dist)) * 10000),
-                "impliedVolatility": 15.5 + (dist * 0.05)
+                "openInterest": int(80000 + max(0, (35 - dist)) * 4000),
+                "changeinOpenInterest": int(300 * (36 - dist) * (1 if i > 0 else -1)),
+                "totalTradedVolume": int(200000 + max(0, (35 - dist)) * 8000),
+                "impliedVolatility": 15.0 + (dist * 0.03)
             },
             "PE": {
-                "openInterest": int(55000 + max(0, (15 - dist)) * 4800),
-                "changeinOpenInterest": int(-400 * (16 - dist)),
-                "totalTradedVolume": int(160000 + max(0, (15 - dist)) * 9500),
-                "impliedVolatility": 16.0 + (dist * 0.05)
+                "openInterest": int(85000 + max(0, (35 - dist)) * 4200),
+                "changeinOpenInterest": int(-300 * (36 - dist) * (1 if i > 0 else -1)),
+                "totalTradedVolume": int(210000 + max(0, (35 - dist)) * 8500),
+                "impliedVolatility": 15.5 + (dist * 0.03)
             }
         })
         
@@ -101,7 +104,7 @@ def load_com_option_chain_from_csv(symbol):
             if col in sub.columns:
                 sub[col] = pd.to_numeric(sub[col].astype(str).str.replace(',', '').str.replace('-', '0'), errors='coerce').fillna(0)
                 
-        strikes = sub['STRIKE PRICE'].unique()
+        strikes = sorted(sub['STRIKE PRICE'].unique())
         records_data = []
         
         for strike in strikes:
