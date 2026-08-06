@@ -129,3 +129,27 @@ def show_settings_page():
 
 if __name__ == "__main__":
     main()
+    # ==========================================
+# अपनी app.py के पुराने कोड के ठीक नीचे यह जोड़ें:
+# ==========================================
+
+import streamlit as st
+from utils.data_fetcher import get_option_chain_data
+from utils.data_analytics import render_option_chain_analytics
+
+st.markdown("---")
+st.markdown("## 📊 लाइव ऑप्शन चेन एवं क्वांट एनालिटिक्स डैशबोर्ड")
+
+# यूजर से सिंबल और कैटेगरी चुनने के लिए इनपुट (यदि आपके ऐप में पहले से सिलेक्टर्स हैं तो उनका उपयोग करें)
+selected_symbol = st.session_state.get("selected_symbol", "NIFTY")
+selected_category = st.session_state.get("selected_category", "NSE Indices")
+
+# डेटा फेच करना
+with st.spinner("लाइव डेटा और क्वांट मेट्रिक्स फेच किए जा रहे हैं..."):
+    option_data = get_option_chain_data(selected_symbol, selected_category)
+
+# एनालिटिक्स और चार्ट्स को स्क्रीन पर रेंडर करना
+if option_data:
+    render_option_chain_analytics(option_data)
+else:
+    st.error("डेटा लोड करने में विफल। कृपया पुनः प्रयास करें।")
