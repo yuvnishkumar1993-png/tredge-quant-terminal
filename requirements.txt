@@ -5,3 +5,7 @@ numpy
 scipy
 plotly
 pytz
+streamlit
+requests
+pandas
+dhanhq
