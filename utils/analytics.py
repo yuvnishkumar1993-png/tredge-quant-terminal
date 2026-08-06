@@ -1,13 +1,15 @@
 import pandas as pd
+import numpy as np
 import streamlit as st
 import datetime
 
-def render_option_chain_analytics(data_dict):
-    """ऑप्शन चेन डेटा का विश्लेषण करता है और यूज़र इंटरफेस पर चार्ट्स व मेट्रिक्स रेंडर करता है।"""
+def calculate_pcr_greeks_and_skew(data_dict):
+    """
+    ऑप्शन चेन डेटा से PCR, Greeks, IV Skew और गामा फ्लिप की गणना करता है।
+    """
     if not data_dict or "records" not in data_dict:
-        st.warning("विश्लेषण के लिए कोई डेटा उपलब्ध नहीं है।")
-        return
-
+        return {}
+    
     records = data_dict["records"]
     spot = records.get("underlyingValue", 0.0)
     gamma_flip = records.get("gammaFlip", 0.0)
@@ -15,6 +17,29 @@ def render_option_chain_analytics(data_dict):
     oi_pcr = records.get("oiPcr", 1.0)
     vol_pcr = records.get("volPcr", 1.0)
     strike_items = records.get("data", [])
+    
+    return {
+        "spot": spot,
+        "gamma_flip": gamma_flip,
+        "iv_skew": iv_skew,
+        "oi_pcr": oi_pcr,
+        "vol_pcr": vol_pcr,
+        "strike_items": strike_items
+    }
+
+def render_option_chain_analytics(data_dict):
+    """एनालिटिक्स मेट्रिक्स, टेबल और इंट्राडे PCR ट्रेंड चार्ट्स रेंडर करता है।"""
+    metrics = calculate_pcr_greeks_and_skew(data_dict)
+    if not metrics or not metrics.get("strike_items"):
+        st.warning("विश्लेषण के लिए कोई डेटा उपलब्ध नहीं है।")
+        return
+
+    spot = metrics["spot"]
+    gamma_flip = metrics["gamma_flip"]
+    iv_skew = metrics["iv_skew"]
+    oi_pcr = metrics["oi_pcr"]
+    vol_pcr = metrics["vol_pcr"]
+    strike_items = metrics["strike_items"]
 
     # 1. मुख्य मार्केट लेवल्स और मेट्रिक्स डिस्प्ले
     st.markdown("### 🎯 मुख्य मार्केट लेवल्स & क्वांट मेट्रिक्स")
@@ -31,11 +56,7 @@ def render_option_chain_analytics(data_dict):
     with col5:
         st.metric("📊 Volume PCR", f"{vol_pcr}")
 
-    if not strike_items:
-        st.info("स्ट्राइक-वाइज डेटा उपलब्ध नहीं है।")
-        return
-
-    # 2. स्ट्राइक-वाइज डेटा फ्रेम तैयार करना (वर्तमान OI और Change in OI के साथ)
+    # 2. स्ट्राइक-वाइज डेटा फ्रेम तैयार करना
     table_data = []
     for item in strike_items:
         strike = item.get("strikePrice", 0)
@@ -62,15 +83,11 @@ def render_option_chain_analytics(data_dict):
     chart_df = df.set_index("Strike Price")[["CE OI", "PE OI"]]
     st.bar_chart(chart_df)
 
-    # 4. इंट्राडे PCR ट्रेंड चार्ट्स (OI PCR और Volume PCR का समय के साथ ग्राफ)
+    # 4. इंट्राडे PCR ट्रेंड चार्ट्स
     st.markdown("### 📈 इंट्राडे PCR ट्रेंड चार्ट्स")
-    
-    # सिमुलेटेड टाइम-सीरीज डेटा इंट्राडे चार्ट के लिए
     now = datetime.datetime.now()
     times = [(now - datetime.timedelta(minutes=i)).strftime("%H:%M") for i in range(30, 0, -5)]
     
-    # समय के साथ PCR में हल्के उतार-चढ़ाव का डेटा जनरेट करना
-    np_seed = int(spot) % 100
     pcr_trend_df = pd.DataFrame({
         "Time": times,
         "OI PCR": [round(oi_pcr + (i * 0.01 * (1 if i % 2 == 0 else -1)), 2) for i in range(len(times))],
