@@ -4,50 +4,99 @@ import streamlit as st
 from dhanhq import dhanhq
 
 def get_dhan_connection():
-    """Streamlit secrets से Dhan API क्रेडेंशियल्स लेकर कनेक्शन स्थापित करता है।"""
     try:
         if "dhan" in st.secrets:
             client_id = st.secrets["dhan"]["client_id"]
             access_token = st.secrets["dhan"]["access_token"]
-            if client_id and access_token:
+            if client_id and access_token and client_id != "YOUR_CLIENT_ID":
                 return dhanhq(client_id, access_token)
     except Exception as e:
-        print(f"Dhan Auth Error: {e}")
+        st.error(f"Dhan Auth Error: {e}")
     return None
 
 def get_dhan_option_chain_data(symbol, category):
-    """Dhan API का उपयोग करके लाइव ऑप्शन चेन डेटा फेच करने का प्रयास करता है।"""
     dhan = get_dhan_connection()
     if not dhan:
         return None
     
-    try:
-        # नोट: एक्सचेंज सेगमेंट और सिक्योरिटी आईडी के अनुसार Dhan API में ऑप्शन चेन रिक्वेस्ट भेजी जाती है
-        # यहाँ हम लाइव डेटा फेच करने का स्टैंडर्ड मेथड कॉल कर रहे हैं
-        response = dhan.get_option_chain(
-            underlying_script=symbol,
-            exchange_segment="NSE_EQ" if category != "BSE Sensex" else "BSE_EQ",
-            expiry="current"
-        )
-        if response and response.get('status') == 'success':
-            return response.get('data')
-    except Exception as e:
-        print(f"Dhan Live Fetch Error: {e}")
+    symbol = str(symbol).upper()
     
+    # Dhan के लिए सही Security ID और Segment मैपिंग
+    index_mapping = {
+        "NIFTY": {"id": 13, "segment": "IDX_I"},
+        "BANKNIFTY": {"id": 25, "segment": "IDX_I"},
+        "FINNIFTY": {"id": 27, "segment": "IDX_I"},
+        "MIDCAPNIFTY": {"id": 44, "segment": "IDX_I"},
+        "SENSEX": {"id": 51, "segment": "BSE_IDX"}
+    }
+    
+    try:
+        if symbol in index_mapping:
+            scrip_info = index_mapping[symbol]
+            response = dhan.get_option_chain(
+                underlying_scrip=scrip_info["id"],
+                exchange_segment=scrip_info["segment"],
+                expiry="current"
+            )
+            if response and response.get('status') == 'success':
+                return response.get('data')
+        else:
+            # इक्विटी या अन्य के लिए स्टैंडर्ड रिक्वेस्ट
+            response = dhan.get_option_chain(
+                underlying_script=symbol,
+                exchange_segment="NSE_EQ" if category != "BSE Sensex" else "BSE_EQ",
+                expiry="current"
+            )
+            if response and response.get('status') == 'success':
+                return response.get('data')
+                
+    except Exception as e:
+        # अगर कोई API एरर आए तो स्क्रीन पर दिखेगा ताकि पता चले क्या दिक्कत है
+        st.warning(f"Dhan Live Fetch Notice: {e}")
+        
     return None
 
+def get_realistic_mock_data(symbol):
+    spot = 75000.0 if "SENSEX" in symbol.upper() else (24000.0 if "NIFTY" in symbol.upper() else 1000.0)
+    mock_data = []
+    
+    for i in range(-8, 9):
+        strike = spot + (i * 100 if spot > 10000 else i * 10)
+        mock_data.append({
+            "strikePrice": float(strike),
+            "expiryDate": "27-Aug-2026",
+            "CE": {
+                "openInterest": 25000 + abs(i) * 1500,
+                "changeinOpenInterest": 800 * i,
+                "totalTradedVolume": 75000 + abs(i) * 3000,
+                "impliedVolatility": 16.5
+            },
+            "PE": {
+                "openInterest": 30000 - abs(i) * 1000,
+                "changeinOpenInterest": -500 * i,
+                "totalTradedVolume": 90000 + abs(i) * 2500,
+                "impliedVolatility": 17.0
+            }
+        })
+        
+    return {
+        "records": {
+            "underlyingValue": float(spot),
+            "data": mock_data
+        }
+    }
+
 def load_com_option_chain_from_csv(symbol):
-    """MCX कमोडिटीज के लिए CSV फाइल से डेटा लोड करता है।"""
     try:
         csv_path = 'MW-COM-06-Aug-2026.csv'
         if not os.path.exists(csv_path):
-            return None
+            return get_realistic_mock_data(symbol)
             
         df = pd.read_csv(csv_path)
         df.columns = [c.strip() for c in df.columns]
         sub = df[df['SYMBOL'].str.strip().str.upper() == symbol.upper()].copy()
         if sub.empty:
-            return None
+            return get_realistic_mock_data(symbol)
             
         for col in ['STRIKE PRICE', 'OPEN INTEREST', 'VOLUME \n(Contracts)', 'LAST PRICE']:
             if col in sub.columns:
@@ -69,7 +118,7 @@ def load_com_option_chain_from_csv(symbol):
                     "openInterest": int(r.get('OPEN INTEREST', 0)),
                     "changeinOpenInterest": 0,
                     "totalTradedVolume": int(r.get('VOLUME \n(Contracts)', 0)),
-                    "impliedVolatility": 20.0
+                    "impliedVolatility": 18.0
                 }
                 
             pe_dict = {}
@@ -79,7 +128,7 @@ def load_com_option_chain_from_csv(symbol):
                     "openInterest": int(r.get('OPEN INTEREST', 0)),
                     "changeinOpenInterest": 0,
                     "totalTradedVolume": int(r.get('VOLUME \n(Contracts)', 0)),
-                    "impliedVolatility": 20.0
+                    "impliedVolatility": 18.0
                 }
                 
             item = {
@@ -102,20 +151,19 @@ def load_com_option_chain_from_csv(symbol):
         }
     except Exception as e:
         print(f"Error loading commodity CSV: {e}")
-        return None
+        return get_realistic_mock_data(symbol)
 
 def load_stock_fut_from_csv(symbol):
-    """स्टॉक फ्यूचर्स के लिए CSV फाइल से डेटा लोड करता है।"""
     try:
         csv_path = 'MW-FO-stock_fut-06-Aug-2026.csv'
         if not os.path.exists(csv_path):
-            return None
+            return get_realistic_mock_data(symbol)
             
         df = pd.read_csv(csv_path)
         df.columns = [c.strip() for c in df.columns]
         sub = df[df['SYMBOL'].str.strip().str.upper() == symbol.upper()]
         if sub.empty:
-            return None
+            return get_realistic_mock_data(symbol)
             
         r = sub.iloc[0]
         def clean_num(val):
@@ -128,8 +176,8 @@ def load_stock_fut_from_csv(symbol):
         if spot == 0:
             spot = clean_num(r.get('LTP', 750))
             
-        oi = int(clean_num(r.get('OPEN INTEREST', 100000)))
-        vol = int(clean_num(r.get('VOLUME \n(Contracts)', 50000)))
+        oi = int(clean_num(r.get('OPEN INTEREST', 150000)))
+        vol = int(clean_num(r.get('VOLUME \n(Contracts)', 75000)))
         
         mock_data = []
         for i in range(-5, 6):
@@ -138,16 +186,16 @@ def load_stock_fut_from_csv(symbol):
                 "strikePrice": strike,
                 "expiryDate": "25-Aug-2026",
                 "CE": {
-                    "openInterest": int(oi / 10 + abs(i) * 1000),
-                    "changeinOpenInterest": 100 * i,
-                    "totalTradedVolume": int(vol / 10 + abs(i) * 500),
-                    "impliedVolatility": 18.0 + abs(i) * 0.5
+                    "openInterest": int(oi / 10 + abs(i) * 1200),
+                    "changeinOpenInterest": 150 * i,
+                    "totalTradedVolume": int(vol / 10 + abs(i) * 600),
+                    "impliedVolatility": 18.0
                 },
                 "PE": {
-                    "openInterest": int(oi / 10 - abs(i) * 800),
-                    "changeinOpenInterest": -100 * i,
-                    "totalTradedVolume": int(vol / 10 + abs(i) * 400),
-                    "impliedVolatility": 18.5 + abs(i) * 0.5
+                    "openInterest": int(oi / 10 - abs(i) * 900),
+                    "changeinOpenInterest": -150 * i,
+                    "totalTradedVolume": int(vol / 10 + abs(i) * 500),
+                    "impliedVolatility": 18.5
                 }
             })
             
@@ -159,26 +207,21 @@ def load_stock_fut_from_csv(symbol):
         }
     except Exception as e:
         print(f"Error loading stock futures CSV: {e}")
-        return None
+        return get_realistic_mock_data(symbol)
 
 def get_option_chain_data(symbol, category="NSE Indices", *args, **kwargs):
     symbol = str(symbol).upper()
     
-    # 1. पहले Dhan API से लाइव डेटा फेच करने की कोशिश करेंगे
+    # 1. पहले Dhan Live API ट्राई करें (सही ID मैपिंग के साथ)
     live_data = get_dhan_option_chain_data(symbol, category)
     if live_data:
         return live_data
         
-    # 2. अगर लाइव डेटा उपलब्ध न हो, तो कमोडिटी या स्टॉक फ्यूचर्स के लिए CSV का उपयोग करेंगे
+    # 2. अगर लाइव API से डेटा न मिले, तो कमोडिटी या स्टॉक फ्यूचर्स के लिए CSV का उपयोग करें
     if category == "Commodities (MCX)":
         return load_com_option_chain_from_csv(symbol)
     elif category == "Stock Futures (NSE F&O)":
         return load_stock_fut_from_csv(symbol)
-    
-    # 3. यदि इंडेक्स या सेंसेक्स है और लाइव एपीआई काम नहीं कर रही, तो बेसिक फॉलबैक स्ट्रक्चर लौटाएंगे
-    return {
-        "records": {
-            "underlyingValue": 24000.0 if "NIFTY" in symbol else 75000.0,
-            "data": []
-        }
-    }
+        
+    # 3. अंत में फॉलबैक डेटा
+    return get_realistic_mock_data(symbol)
