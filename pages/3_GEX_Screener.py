@@ -2,34 +2,20 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-import os
 import math
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from utils import init_global_state, get_asset_details_from_master
 
 st.set_page_config(page_title="Advanced Institutional GEX Desk", page_icon="🧲", layout="wide")
 st.markdown("## 🧲 Advanced Gamma Exposure (GEX) & Dealer Hedging Profile")
 st.markdown("---")
 
-@st.cache_data(ttl=60)
-def load_dhan_master():
-    for file in os.listdir("."):
-        if file.endswith(".csv"):
-            try:
-                df = pd.read_csv(file, low_memory=False)
-                df.columns = [str(col).strip().upper() for col in df.columns]
-                return df
-            except:
-                continue
-    return pd.DataFrame()
+init_global_state()
 
-df_master = load_dhan_master()
 is_auth = st.session_state.get("dhan_authenticated", False)
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
-
-if "global_symbol" not in st.session_state:
-    st.session_state.global_symbol = "NIFTY"
 
 st.sidebar.markdown("### ⚙️ GEX Desk Parameters")
 selected_symbol = st.sidebar.selectbox(
@@ -40,27 +26,7 @@ selected_symbol = st.sidebar.selectbox(
 )
 st.session_state.global_symbol = selected_symbol
 
-index_mapping = {
-    "NIFTY": {"id": 13, "seg": "IDX_I"},
-    "BANKNIFTY": {"id": 25, "seg": "IDX_I"},
-    "FINNIFTY": {"id": 27, "seg": "IDX_I"}
-}
-
-if selected_symbol in index_mapping:
-    resolved_sec_id = index_mapping[selected_symbol]["id"]
-    resolved_seg = index_mapping[selected_symbol]["seg"]
-else:
-    resolved_sec_id = 13
-    resolved_seg = "NSE_FNO"
-    if not df_master.empty:
-        sym_col = next((c for c in df_master.columns if 'SYMBOL' in c or 'TRADING' in c), None)
-        id_col = next((c for c in df_master.columns if 'ID' in c), None)
-        seg_col = next((c for c in df_master.columns if 'SEGMENT' in c or 'EXCH' in c), None)
-        if sym_col and id_col:
-            matched = df_master[df_master[sym_col].astype(str).str.contains(selected_symbol, na=False)]
-            if not matched.empty:
-                resolved_sec_id = int(matched.iloc[0][id_col])
-                if seg_col: resolved_seg = str(matched.iloc[0][seg_col])
+resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
 
 expiries = ["2026-08-11", "2026-08-18", "2026-08-25"]
 if is_auth and access_token:
@@ -75,8 +41,6 @@ if is_auth and access_token:
         pass
 
 selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="gex_exp")
-lot_sizes = {"NIFTY": 25, "BANKNIFTY": 15, "FINNIFTY": 25, "RELIANCE": 250, "TCS": 175, "INFY": 400, "SBIN": 750}
-lot_size = lot_sizes.get(selected_symbol, 25)
 
 def norm_pdf(x): return math.exp(-0.5 * x**2) / math.sqrt(2 * math.pi)
 def calculate_gamma(S, K, T, sigma):
