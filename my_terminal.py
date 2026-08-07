@@ -18,13 +18,12 @@ st.markdown("""
     h1, h2, h3 {color: #e2e8f0; font-family: 'Inter', -apple-system, sans-serif;}
     .stSidebar {background-color: #161b22; border-right: 1px solid #30363d;}
     .metric-card {background-color: #21262d; padding: 20px; border-radius: 8px; border: 1px solid #30363d; box-shadow: 0 4px 6px rgba(0,0,0,0.3);}
-    .stSelectbox, .stRadio {font-family: 'Inter', sans-serif;}
     </style>
 """, unsafe_allow_html=True)
 
 # --- APP HEADER ---
 st.title("⚡ Quant Trading Terminal Pro [Institutional Edition]")
-st.markdown("Advanced F&O Analytics, Gamma Exposure (GEX) Mapping & Quantitative Risk Intelligence")
+st.markdown("Advanced F&O Analytics, Active Strike GEX Mapping & Quantitative Risk Intelligence")
 
 # --- SIDEBAR NAVIGATION & CONTROLS ---
 st.sidebar.header("System Navigation")
@@ -44,8 +43,8 @@ menu = st.sidebar.selectbox(
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ Strike Span Engine")
 strike_range_mode = st.sidebar.radio(
-    "Select ATM Range", 
-    ["±10 Strikes (Intraday)", "±25 Strikes (Positional)", "Full Comprehensive Chain"],
+    "Select Strike Span (Active Strike Centric)", 
+    ["±10 Active Strikes (Intraday)", "±25 Active Strikes (Positional)", "Full Comprehensive Chain"],
     index=1
 )
 
@@ -125,19 +124,23 @@ full_df, spot_price = load_option_chain_data(uploaded_file)
 if uploaded_file is not None and "Strike" in full_df.columns:
     st.sidebar.success("✅ Custom CSV Mapped & Loaded Successfully!")
 
-# --- FILTER DATA BASED ON STRIKE SPAN ---
-def filter_strikes(df, mode, spot):
-    if "Strike" not in df.columns:
+# --- ACTIVE STRIKE CENTRIC FILTER ENGINE ---
+def filter_active_strikes(df, mode):
+    if "Strike" not in df.columns or df.empty:
         return df
-    atm_idx = (df['Strike'] - spot).abs().idxmin()
+    
+    # Calculate Active Strike based on Highest Total Open Interest & Volume Concentration
+    df['Total_Activity'] = df['CE_OI'] + df['PE_OI'] + df.get('CE_Volume', 0) + df.get('PE_Volume', 0)
+    active_idx = df['Total_Activity'].idxmax()
+    
     if "±10" in mode:
-        return df.iloc[max(0, atm_idx - 10): min(len(df), atm_idx + 11)]
+        return df.iloc[max(0, active_idx - 10): min(len(df), active_idx + 11)]
     elif "±25" in mode:
-        return df.iloc[max(0, atm_idx - 25): min(len(df), atm_idx + 26)]
+        return df.iloc[max(0, active_idx - 25): min(len(df), active_idx + 26)]
     else:
         return df
 
-df = filter_strikes(full_df, strike_range_mode, spot_price)
+df = filter_active_strikes(full_df, strike_range_mode)
 
 # --- ACCURATE MAX PAIN & PAYOUT ENGINE ---
 def calculate_max_pain_and_curve(dataframe):
@@ -185,7 +188,7 @@ if menu == "Live Dashboard":
 
 # --- 2. OPTION CHAIN MATRIX ---
 elif menu == "Option Chain Matrix":
-    st.subheader("⛓️ Comprehensive Option Chain Matrix & Heatmap")
+    st.subheader("⛓️ Active Strike Centric Option Chain Matrix & Heatmap")
     c1, c2 = st.columns(2)
     symbol = c1.selectbox("Underlying Symbol", ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS"])
     expiry = c2.selectbox("Contract Expiry", ["2026-06-11", "2026-06-18", "2026-06-25"])
@@ -211,7 +214,6 @@ elif menu == "PCR & Max Pain Analytics":
     
     st.markdown("---")
     
-    # Chart 1: PCR Trend Momentum
     st.subheader("📈 Intraday PCR Trend & Momentum (OI vs Volume)")
     time_ticks = ["09:20", "10:00", "11:00", "12:00", "01:00", "02:00", "03:00", "03:30"]
     np.random.seed(10)
@@ -232,10 +234,7 @@ elif menu == "PCR & Max Pain Analytics":
     st.plotly_chart(fig_pcr_trend, use_container_width=True)
     
     st.markdown("---")
-    
-    # Chart 2: Max Pain Payout Curve
     st.subheader("🧮 Max Pain U-Shaped Payout Curve")
-    st.markdown("The valley floor indicates the strike price where option sellers maximize profits and option buyers take maximum pain.")
     
     if not payout_df.empty:
         fig_payout = go.Figure()
@@ -265,7 +264,7 @@ elif menu == "PCR & Max Pain Analytics":
 
 # --- 4. GAMMA, GEX & WALLS ---
 elif menu == "Gamma, GEX & Walls":
-    st.subheader("⚡ Advanced Gamma Walls & GEX Exposure")
+    st.subheader("⚡ Active Strike Centric Gamma Walls & GEX Exposure")
     ce_gex = df['CE_OI'] * df['CE_Gamma'] * -100
     pe_gex = df['PE_OI'] * df['PE_Gamma'] * 100
     
@@ -303,21 +302,21 @@ elif menu == "Historical Time-Travel":
 
 # --- 6. INSTITUTIONAL GEX SCREENER ---
 elif menu == "Institutional GEX Screener":
-    st.subheader("🌐 Institutional GEX Screener (Multi-Stock Matrix)")
-    st.markdown("Heavy-Duty Multi-Stock Matrix tracking Gamma Flip, Walls, and Net GEX Status across the F&O Segment.")
+    st.subheader("🌐 Institutional GEX Screener (Active Strike Centric Matrix)")
+    st.markdown("Heavy-Duty Multi-Stock Matrix tracking Gamma Flip, Walls, and Net GEX Status across active F&O strikes.")
     
     col_f1, col_f2 = st.columns(2)
     gex_filter = col_f1.selectbox("Filter by GEX Status", ["All", "Positive (+)", "Negative (-)"])
     search_query = col_f2.text_input("Search Stock / Index", "").upper()
     
     screener_data = [
-        {"Stock Name": "NIFTY", "Spot Price": "24,500", "Gamma Flip Point": "24,450", "Max Call Wall (Resistance)": "24,800", "Max Put Wall (Support)": "24,300", "Net GEX Status": "Positive (+)", "Actionable Signal": "Range Bound / Mean Reverting"},
-        {"Stock Name": "BANKNIFTY", "Spot Price": "51,800", "Gamma Flip Point": "51,600", "Max Call Wall (Resistance)": "52,500", "Max Put Wall (Support)": "51,200", "Net GEX Status": "Positive (+)", "Actionable Signal": "Bullish Support Accumulation"},
-        {"Stock Name": "RELIANCE", "Spot Price": "2,900", "Gamma Flip Point": "2,880", "Max Call Wall (Resistance)": "3,000", "Max Put Wall (Support)": "2,850", "Net GEX Status": "Negative (-)", "Actionable Signal": "High Volatility / Breakout Risk"},
-        {"Stock Name": "INFY", "Spot Price": "1,850", "Gamma Flip Point": "1,860", "Max Call Wall (Resistance)": "1,900", "Max Put Wall (Support)": "1,800", "Net GEX Status": "Positive (+)", "Actionable Signal": "Supported / Range Stable"},
-        {"Stock Name": "TCS", "Spot Price": "4,120", "Gamma Flip Point": "4,100", "Max Call Wall (Resistance)": "4,250", "Max Put Wall (Support)": "4,050", "Net GEX Status": "Positive (+)", "Actionable Signal": "Accumulation Zone"},
-        {"Stock Name": "HDFCBANK", "Spot Price": "1,680", "Gamma Flip Point": "1,690", "Max Call Wall (Resistance)": "1,750", "Max Put Wall (Support)": "1,650", "Net GEX Status": "Negative (-)", "Actionable Signal": "Trend Momentum Active"},
-        {"Stock Name": "TATAMOTORS", "Spot Price": "980", "Gamma Flip Point": "975", "Max Call Wall (Resistance)": "1,020", "Max Put Wall (Support)": "950", "Net GEX Status": "Negative (-)", "Actionable Signal": "Breakout Watch"}
+        {"Stock Name": "NIFTY", "Active Strike": "24,500", "Gamma Flip Point": "24,450", "Max Call Wall (Resistance)": "24,800", "Max Put Wall (Support)": "24,300", "Net GEX Status": "Positive (+)", "Actionable Signal": "Range Bound / Mean Reverting"},
+        {"Stock Name": "BANKNIFTY", "Active Strike": "51,800", "Gamma Flip Point": "51,600", "Max Call Wall (Resistance)": "52,500", "Max Put Wall (Support)": "51,200", "Net GEX Status": "Positive (+)", "Actionable Signal": "Bullish Support Accumulation"},
+        {"Stock Name": "RELIANCE", "Active Strike": "2,900", "Gamma Flip Point": "2,880", "Max Call Wall (Resistance)": "3,000", "Max Put Wall (Support)": "2,850", "Net GEX Status": "Negative (-)", "Actionable Signal": "High Volatility / Breakout Risk"},
+        {"Stock Name": "INFY", "Active Strike": "1,850", "Gamma Flip Point": "1,860", "Max Call Wall (Resistance)": "1,900", "Max Put Wall (Support)": "1,800", "Net GEX Status": "Positive (+)", "Actionable Signal": "Supported / Range Stable"},
+        {"Stock Name": "TCS", "Active Strike": "4,120", "Gamma Flip Point": "4,100", "Max Call Wall (Resistance)": "4,250", "Max Put Wall (Support)": "4,050", "Net GEX Status": "Positive (+)", "Actionable Signal": "Accumulation Zone"},
+        {"Stock Name": "HDFCBANK", "Active Strike": "1,680", "Gamma Flip Point": "1,690", "Max Call Wall (Resistance)": "1,750", "Max Put Wall (Support)": "1,650", "Net GEX Status": "Negative (-)", "Actionable Signal": "Trend Momentum Active"},
+        {"Stock Name": "TATAMOTORS", "Active Strike": "980", "Gamma Flip Point": "975", "Max Call Wall (Resistance)": "1,020", "Max Put Wall (Support)": "950", "Net GEX Status": "Negative (-)", "Actionable Signal": "Breakout Watch"}
     ]
     
     df_screener = pd.DataFrame(screener_data)
@@ -328,7 +327,7 @@ elif menu == "Institutional GEX Screener":
         df_screener = df_screener[df_screener["Stock Name"].str.contains(search_query)]
         
     st.dataframe(df_screener, use_container_width=True, hide_index=True)
-    st.info("💡 **System Tip:** Optimized with ATM-centric processing to guarantee zero latency across 200+ F&O assets.")
+    st.info("💡 **System Tip:** Filter dynamically shifts based on highest volume/OI concentration rather than rigid ATM spots.")
 
 # --- 7. BROKER API CONFIGURATION ---
 elif menu == "Broker API Configuration":
