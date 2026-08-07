@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Quant Terminal Pro | Universal F&O Engine",
+    page_title="Quant Terminal Pro | Universal Dynamic F&O Engine",
     page_icon="⚡",
     layout="wide"
 )
@@ -22,8 +22,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Quant Trading Terminal Pro [Stable Dynamic F&O Engine]")
-st.markdown("Institutional Suite — Live Index & Stock Derivatives Screener with Error-Free Resolution")
+st.title("⚡ Quant Trading Terminal Pro [Universal Dynamic F&O Engine]")
+st.markdown("Institutional Suite — Dynamic Index & Stock Derivatives Screener with Auto-Scrip Resolution")
 
 # ==============================================================================
 # STEP 1: SECURE API AUTHENTICATION GATEWAY
@@ -65,7 +65,7 @@ if not st.session_state.dhan_authenticated:
                             st.session_state.dhan_authenticated = True
                             st.session_state.client_id = input_client_id.strip()
                             st.session_state.access_token = input_access_token.strip()
-                            st.success("✅ Authentication successful! Loading terminal...")
+                            st.success("✅ Authentication successful! Loading universal instruments...")
                             st.rerun()
                         else:
                             st.error(f"❌ Authentication Failed. HTTP Status: {res.status_code}")
@@ -76,7 +76,7 @@ if not st.session_state.dhan_authenticated:
     st.stop()
 
 # ==============================================================================
-# STEP 2: STABLE UNIVERSAL DERIVATIVE SELECTOR
+# STEP 2: ROBUST DYNAMIC SCRIP MASTER LOADER
 # ==============================================================================
 st.sidebar.success("🟢 API Session Active")
 if st.sidebar.button("🔒 Disconnect / Logout"):
@@ -99,42 +99,70 @@ menu = st.sidebar.selectbox(
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ Universal Derivative Selector")
 
-# Robust Dictionary mapping for major indices and top F&O stocks with exact Dhan Security IDs & Segments
-instrument_registry = {
-    # Indices
-    "NIFTY": {"sec_id": "13", "segment": "IDX_I", "type": "Index"},
-    "BANKNIFTY": {"sec_id": "25", "segment": "IDX_I", "type": "Index"},
-    "FINNIFTY": {"sec_id": "27", "segment": "IDX_I", "type": "Index"},
-    "MIDCPNIFTY": {"sec_id": "28", "segment": "IDX_I", "type": "Index"},
-    "SENSEX": {"sec_id": "51", "segment": "IDX_I", "type": "Index"},
-    
-    # Top F&O Stocks (Dhan Security IDs & NSE_FNO Segment)
-    "RELIANCE": {"sec_id": "2885", "segment": "NSE_FNO", "type": "Stock F&O"},
-    "TCS": {"sec_id": "11483", "segment": "NSE_FNO", "type": "Stock F&O"},
-    "INFY": {"sec_id": "1594", "segment": "NSE_FNO", "type": "Stock F&O"},
-    "HDFCBANK": {"sec_id": "1333", "segment": "NSE_FNO", "type": "Stock F&O"},
-    "ICICIBANK": {"sec_id": "4963", "segment": "NSE_FNO", "type": "Stock F&O"},
-    "SBIN": {"sec_id": "3045", "segment": "NSE_FNO", "type": "Stock F&O"},
-    "AXISBANK": {"sec_id": "5900", "segment": "NSE_FNO", "type": "Stock F&O"},
-    "ITC": {"sec_id": "1660", "segment": "NSE_FNO", "type": "Stock F&O"},
-    "LT": {"sec_id": "1148", "segment": "NSE_FNO", "type": "Stock F&O"},
-    "BHARTIARTL": {"sec_id": "10604", "segment": "NSE_FNO", "type": "Stock F&O"}
+@st.cache_data(ttl=3600)
+def load_dhan_scrip_master():
+    try:
+        url = "https://images.dhan.co/api-data/api-scrip-master.csv"
+        df = pd.read_csv(url, low_memory=False)
+        df.columns = [str(col).strip().upper() for col in df.columns]
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+with st.spinner("Syncing Universal F&O Master Database from Exchange..."):
+    master_df = load_dhan_scrip_master()
+
+# Fallback Registry if master fails to load or columns vary
+fallback_registry = {
+    "NIFTY": {"sec_id": "13", "segment": "IDX_I"},
+    "BANKNIFTY": {"sec_id": "25", "segment": "IDX_I"},
+    "FINNIFTY": {"sec_id": "27", "segment": "IDX_I"},
+    "MIDCPNIFTY": {"sec_id": "28", "segment": "IDX_I"},
+    "SENSEX": {"sec_id": "51", "segment": "IDX_I"},
+    "RELIANCE": {"sec_id": "2885", "segment": "NSE_FNO"},
+    "TCS": {"sec_id": "11483", "segment": "NSE_FNO"},
+    "INFY": {"sec_id": "1594", "segment": "NSE_FNO"},
+    "HDFCBANK": {"sec_id": "1333", "segment": "NSE_FNO"},
+    "ICICIBANK": {"sec_id": "4963", "segment": "NSE_FNO"}
 }
 
-selected_symbol = st.sidebar.selectbox("Select Underlying Symbol", list(instrument_registry.keys()))
-current_sec_id = instrument_registry[selected_symbol]["sec_id"]
-current_segment = instrument_registry[selected_symbol]["segment"]
+if not master_df.empty:
+    # Dynamically detect columns
+    seg_col = next((c for c in master_df.columns if 'SEGMENT' in c or 'EXCH' in c), None)
+    sym_col = next((c for c in master_df.columns if 'TRADING_SYMBOL' in c or 'SYMBOL' in c), None)
+    id_col = next((c for c in master_df.columns if 'SECURITY_ID' in c or ('ID' in c and 'SMST' in c)), master_df.columns[0])
+    
+    if seg_col and sym_col and id_col:
+        fno_df = master_df[master_df[seg_col].astype(str).str.upper().isin(['IDX_I', 'NSE_FNO'])].copy()
+        unique_syms = sorted(fno_df[sym_col].dropna().unique().tolist())
+        symbol_choices = [s for s in unique_syms if len(str(s)) < 15 and not str(s).endswith(('CE', 'PE', 'FUT'))]
+        if not symbol_choices:
+            symbol_choices = list(fallback_registry.keys())
+    else:
+        symbol_choices = list(fallback_registry.keys())
+else:
+    symbol_choices = list(fallback_registry.keys())
 
-# Allow custom override if user wants to input any other security ID
-enable_custom = st.sidebar.checkbox("Advanced: Custom Security ID Override", value=False)
-if enable_custom:
-    current_sec_id = st.sidebar.text_input("Enter Custom Security ID", value=current_sec_id)
-    current_segment = st.sidebar.selectbox("Enter Segment", ["IDX_I", "NSE_FNO", "NSE"])
+selected_symbol = st.sidebar.selectbox("Select Underlying Symbol", symbol_choices)
 
-# DYNAMIC EXPIRY GENERATOR (Tuesdays for Nifty family, Thursdays for BankNifty/Stocks)
+# Resolve Security ID & Segment Dynamically
+if not master_df.empty and seg_col and sym_col and id_col:
+    matched = fno_df[fno_df[sym_col] == selected_symbol]
+    if matched.empty:
+        matched = fno_df[fno_df[sym_col].str.startswith(selected_symbol, na=False)]
+    if not matched.empty:
+        current_sec_id = str(matched.iloc[0][id_col])
+        current_segment = str(matched.iloc[0][seg_col])
+    else:
+        current_sec_id = fallback_registry.get(selected_symbol, {"sec_id": "13"})["sec_id"]
+        current_segment = fallback_registry.get(selected_symbol, {"segment": "IDX_I"})["segment"]
+else:
+    current_sec_id = fallback_registry.get(selected_symbol, {"sec_id": "13"})["sec_id"]
+    current_segment = fallback_registry.get(selected_symbol, {"segment": "IDX_I"})["segment"]
+
+# Dynamic Expiry Generator
 def get_dynamic_expiries(symbol):
     today = datetime.now().date()
-    # Nifty/FinNifty = Tuesday (1), BankNifty/Stocks = Thursday (3)
     target_weekday = 1 if symbol in ["NIFTY", "FINNIFTY", "MIDCPNIFTY"] else 3
     dates = []
     for i in range(45):
@@ -219,7 +247,7 @@ def fetch_universal_option_chain(client_id, access_token, sec_id, segment, expir
         return pd.DataFrame(), 0.0
 
 if "cached_df" not in st.session_state or refresh_data:
-    with st.spinner(f"Fetching live derivative chain for {selected_symbol}..."):
+    with st.spinner(f"Fetching live derivative chain for {selected_symbol} (ID: {current_sec_id})..."):
         df_res, spot_res = fetch_universal_option_chain(
             st.session_state.client_id, 
             st.session_state.access_token, 
@@ -234,7 +262,7 @@ full_df = st.session_state.cached_df
 spot_price = st.session_state.cached_spot
 
 if full_df.empty:
-    st.info("💡 इस कॉन्ट्रैक्ट या एक्सपायरी के लिए लाइव डेटा उपलब्ध नहीं है (या बाजार बंद है)। कृपया सही Security ID या एक्सपायरी चुनें और **Refresh Market Data** दबाएं।")
+    st.info("💡 इस कॉन्ट्रैक्ट या एक्सपायरी के लिए लाइव डेटा उपलब्ध नहीं है (या बाजार बंद है)। कृपया सही एक्सपायरी चुनें और **Refresh Market Data** दबाएं।")
     st.stop()
 
 # --- ACTIVE STRIKE FILTER ---
