@@ -21,8 +21,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- APP HEADER ---
-st.title("📈 Quant Trading Terminal Pro [Clean Institutional Edition]")
-st.markdown("Advanced F&O Analytics with CSV Data Verification & Dynamic Screener")
+st.title("📈 Quant Trading Terminal Pro [Robust Edition]")
+st.markdown("Advanced F&O Analytics with Smart CSV Mapping & Accurate Max Pain Engine")
 
 # --- SIDEBAR NAVIGATION & CONTROLS ---
 st.sidebar.header("Navigation")
@@ -47,53 +47,69 @@ strike_range_mode = st.sidebar.radio(
     index=1
 )
 
-# --- CSV UPLOAD SYSTEM FOR RE-CHECKING CALCULATIONS ---
+# --- SMART CSV UPLOAD SYSTEM ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("📁 Data Verification & Upload")
 uploaded_file = st.sidebar.file_uploader("Upload Option Chain CSV", type=["csv"])
 
-# --- DATA ENGINE (CSV or Clean Default Mock Engine) ---
 @st.cache_data
 def load_option_chain_data(file):
     if file is not None:
         try:
             df_csv = pd.read_csv(file)
-            # Basic validation check for required columns
-            required_cols = ["Strike", "CE_OI", "PE_OI"]
-            if all(col in df_csv.columns for col in required_cols):
-                # Ensure missing greeks or IVs have default fallbacks
+            # Clean column whitespaces
+            df_csv.columns = df_csv.columns.str.strip()
+            
+            # Smart auto-mapping for flexible CSV column names
+            col_map = {}
+            for col in df_csv.columns:
+                lower_col = col.lower()
+                if 'strike' in lower_col: col_map[col] = 'Strike'
+                elif 'ce' in lower_col and ('oi' in lower_col or 'open' in lower_col): col_map[col] = 'CE_OI'
+                elif 'pe' in lower_col and ('oi' in lower_col or 'open' in lower_col): col_map[col] = 'PE_OI'
+                elif 'ce' in lower_col and 'iv' in lower_col: col_map[col] = 'CE_IV'
+                elif 'pe' in lower_col and 'iv' in lower_col: col_map[col] = 'PE_IV'
+                elif 'ce' in lower_col and 'gamma' in lower_col: col_map[col] = 'CE_Gamma'
+                elif 'pe' in lower_col and 'gamma' in lower_col: col_map[col] = 'PE_Gamma'
+            
+            df_csv = df_csv.rename(columns=col_map)
+            
+            if "Strike" in df_csv.columns and "CE_OI" in df_csv.columns and "PE_OI" in df_csv.columns:
+                # Set defaults for missing optional columns
                 if "CE_IV" not in df_csv.columns: df_csv["CE_IV"] = 15.0
                 if "PE_IV" not in df_csv.columns: df_csv["PE_IV"] = 15.0
                 if "CE_Gamma" not in df_csv.columns: df_csv["CE_Gamma"] = 0.002
                 if "PE_Gamma" not in df_csv.columns: df_csv["PE_Gamma"] = 0.002
-                return df_csv, 24600 # Default spot reference
+                if "CE_Chg_OI" not in df_csv.columns: df_csv["CE_Chg_OI"] = 0
+                if "PE_Chg_OI" not in df_csv.columns: df_csv["PE_Chg_OI"] = 0
+                
+                spot_ref = df_csv['Strike'].iloc[len(df_csv)//2] # Approximate spot at middle strike
+                return df_csv, spot_ref
+            else:
+                st.sidebar.error("❌ CSV must contain Strike, CE_OI, and PE_OI columns!")
         except Exception as e:
             st.sidebar.error(f"Error reading CSV: {e}")
     
-    # Fallback Clean Minimalist Default Engine (No heavy raw data blocks)
+    # Fallback Default Engine if no CSV uploaded
     default_strikes = np.arange(23000, 26200, 50)
     np.random.seed(42)
     df_default = pd.DataFrame({
         "Strike": default_strikes,
         "CE_OI": np.random.randint(10000, 200000, len(default_strikes)),
         "CE_Chg_OI": np.random.randint(-5000, 10000, len(default_strikes)),
-        "CE_Volume": np.random.randint(50000, 500000, len(default_strikes)),
         "CE_IV": np.random.uniform(10.0, 25.0, len(default_strikes)),
         "CE_Gamma": np.random.uniform(0.0005, 0.0040, len(default_strikes)),
-        "CE_LTP": np.maximum(1.0, 24600 - default_strikes + np.random.uniform(10, 50, len(default_strikes))),
         "PE_OI": np.random.randint(10000, 200000, len(default_strikes)),
         "PE_Chg_OI": np.random.randint(-5000, 10000, len(default_strikes)),
-        "PE_Volume": np.random.randint(50000, 500000, len(default_strikes)),
         "PE_IV": np.random.uniform(10.0, 25.0, len(default_strikes)),
-        "PE_Gamma": np.random.uniform(0.0005, 0.0040, len(default_strikes)),
-        "PE_LTP": np.maximum(1.0, default_strikes - 24600 + np.random.uniform(10, 50, len(default_strikes)))
+        "PE_Gamma": np.random.uniform(0.0005, 0.0040, len(default_strikes))
     })
     return df_default, 24600
 
 full_df, spot_price = load_option_chain_data(uploaded_file)
 
 if uploaded_file is not None:
-    st.sidebar.success("✅ Custom CSV Loaded & Verified Successfully!")
+    st.sidebar.success("✅ CSV Successfully Mapped & Loaded!")
 
 # --- FILTER DATA BASED ON SIDEBAR STRIKE RANGE ---
 def filter_strikes(df, mode, spot):
@@ -109,11 +125,35 @@ def filter_strikes(df, mode, spot):
 
 df = filter_strikes(full_df, strike_range_mode, spot_price)
 
+# --- ACCURATE MAX PAIN CALCULATION ENGINE ---
+def calculate_max_pain(dataframe):
+    if dataframe.empty or 'Strike' not in dataframe.columns or 'CE_OI' not in dataframe.columns or 'PE_OI' not in dataframe.columns:
+        return spot_price
+    
+    strikes = dataframe['Strike'].values
+    ce_oi = dataframe['CE_OI'].values
+    pe_oi = dataframe['PE_OI'].values
+    
+    min_payout = float('inf')
+    max_pain_strike = strikes[0]
+    
+    for s in strikes:
+        # Total payout if market expires at strike 's'
+        call_payout = np.sum(np.maximum(0, s - strikes) * ce_oi)
+        put_payout = np.sum(np.maximum(0, strikes - s) * pe_oi)
+        total_payout = call_payout + put_payout
+        
+        if total_payout < min_payout:
+            min_payout = total_payout
+            max_pain_strike = s
+            
+    return max_pain_strike
+
 # --- RECALCULATE METRICS DYNAMICALLY ---
 total_ce = df['CE_OI'].sum() if not df.empty and 'CE_OI' in df.columns else 1
 total_pe = df['PE_OI'].sum() if not df.empty and 'PE_OI' in df.columns else 0
 pcr_oi = round(total_pe / total_ce, 2) if total_ce > 0 else 0
-max_pain = df.loc[df['CE_OI'].idxmax(), 'Strike'] if not df.empty and 'CE_OI' in df.columns else spot_price
+max_pain = calculate_max_pain(df)
 
 # --- 1. LIVE DASHBOARD ---
 if menu == "Live Dashboard":
@@ -122,7 +162,7 @@ if menu == "Live Dashboard":
     c1.metric("Spot Reference", f"₹{spot_price:,.2f}", "Live Data Active")
     c2.metric("Market PCR (OI)", str(pcr_oi), "Bullish/Bearish Balance")
     c3.metric("Net Gamma State", "NEGATIVE", "High Volatility", delta_color="inverse")
-    c4.metric("Max Pain Strike", f"₹{max_pain}", "Writer Profit Zone")
+    c4.metric("Max Pain Strike", f"₹{max_pain:,.0f}", "Writer Minimum Payout Zone")
 
 # --- 2. OPTION CHAIN ---
 elif menu == "Option Chain":
@@ -142,7 +182,7 @@ elif menu == "Option Chain":
 elif menu == "PCR & Max Pain":
     st.subheader("📉 PCR, Max Pain & IV Skew Analysis")
     bias = "Bullish Support Dominant (Put Writers Active)" if pcr_oi > 1.05 else "Bearish Resistance Dominant (Call Writers Active)"
-    st.info(f"**📌 Market Direction Hint:** {bias} | **PCR:** {pcr_oi} | **Max Pain:** ₹{max_pain}")
+    st.info(f"**📌 Market Direction Hint:** {bias} | **PCR:** {pcr_oi} | **Max Pain:** ₹{max_pain:,.0f}")
     
     strike_str = df['Strike'].astype(str)
     
