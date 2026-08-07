@@ -50,8 +50,8 @@ def fetch_dhan_sdk_option_chain(client_id, access_token, symbol="NIFTY"):
         return pd.DataFrame(), 0.0
 
     try:
-        # Initialize official Dhan client
-        dhan = dhanhq(client_id.strip(), access_token.strip())
+        # Fixed Initialization using Keyword Arguments to prevent positional arg mismatch
+        dhan = dhanhq(client_id=client_id.strip(), access_token=access_token.strip())
         
         # Map underlying symbols to Dhan underlying security IDs & segments
         # NIFTY = 13 (IDX_I), BANKNIFTY = 25 (IDX_I), FINNIFTY = 27 (IDX_I)
