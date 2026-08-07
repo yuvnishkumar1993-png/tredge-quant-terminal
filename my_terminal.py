@@ -4,16 +4,17 @@ import numpy as np
 import requests
 from datetime import datetime
 import plotly.graph_objects as go
+import plotly.express as px
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Quant Terminal Pro | Institutional Enterprise Edition",
+    page_title="Quant Terminal Pro | Universal Multi-Exchange Graphical Suite",
     page_icon="⚡",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- INSTITUTIONAL THEME & CSS ---
+# --- PROFESSIONAL INSTITUTIONAL STYLING ---
 st.markdown("""
     <style>
     .main {background-color: #0b0e14; color: #e6edf3; font-family: 'Inter', sans-serif;}
@@ -24,7 +25,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<div class='terminal-header'><h1>⚡ QUANT TERMINAL PRO <span style='font-size: 16px; color: #8b949e;'>[INSTITUTIONAL SUITE v4.5]</span></h1></div>", unsafe_allow_html=True)
+st.markdown("<div class='terminal-header'><h1>⚡ QUANT TERMINAL PRO <span style='font-size: 16px; color: #8b949e;'>[UNIVERSAL GRAPHICAL SUITE v5.0]</span></h1></div>", unsafe_allow_html=True)
 
 # ==============================================================================
 # STEP 1: ENTERPRISE AUTHENTICATION GATEWAY
@@ -49,7 +50,6 @@ if not st.session_state.dhan_authenticated:
             
             if submit_auth:
                 if input_client_id and input_access_token:
-                    # Quick verification ping
                     test_url = "https://api.dhan.co/v2/optionchain/expirylist"
                     test_headers = {"access-token": input_access_token.strip(), "client-id": input_client_id.strip(), "Content-Type": "application/json"}
                     test_payload = {"UnderlyingScrip": 13, "UnderlyingSeg": "IDX_I"}
@@ -71,7 +71,7 @@ if not st.session_state.dhan_authenticated:
     st.stop()
 
 # ==============================================================================
-# STEP 2: PROFESSIONAL SIDEBAR & EXCHANGE CONTROLS
+# STEP 2: MASTER SCRIP RESOLUTION (NSE, BSE, MCX ALL F&O INSTRUMENTS)
 # ==============================================================================
 st.sidebar.markdown("### 🟢 Session: ACTIVE")
 if st.sidebar.button("🔒 Terminate Session"):
@@ -79,36 +79,87 @@ if st.sidebar.button("🔒 Terminate Session"):
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📊 Analytics Modules")
+st.sidebar.subheader("📊 Analytics Visual Modules")
 menu = st.sidebar.selectbox(
-    "Select Core Engine",
+    "Select Graphical Dashboard",
     [
-        "📊 Macro Pulse & Dashboard", 
-        "⛓️ Multi-Strike Option Matrix", 
-        "📈 PCR & Max Pain Surface", 
-        "⚡ Gamma Exposure (GEX) & Walls",
-        "📐 Volatility & Greeks Matrix"
+        "📊 Macro Pulse & Graphical Overview", 
+        "📈 OI, Volume PCR & Price Relations", 
+        "⛓️ Option Chain Matrix (S&R Highlighting)", 
+        "📉 Max Pain & Settlement Payout Curve", 
+        "⚡ Gamma Exposure (GEX) & Dealer Walls",
+        "📐 Greeks & Volatility Surface"
     ]
 )
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("⚙️ Asset & Exchange Registry")
+st.sidebar.subheader("⚙️ Universal Scrip Selector")
 
-exchange_mapping = {
-    "NSE Index & Options (Nifty/BankNifty)": {"segment": "IDX_I", "default_id": 13, "symbol": "NIFTY"},
-    "BSE Derivatives (Sensex)": {"segment": "BSE_FNO", "default_id": 1, "symbol": "SENSEX"},
-    "MCX Commodities (Gold/Crude)": {"segment": "MCX_COMM", "default_id": 412345, "symbol": "COMMODITY"}
-}
+@st.cache_data
+def load_master_scrip_database():
+    try:
+        df = pd.read_csv('api-scrip-master.csv', low_memory=False)
+        df.columns = [str(col).strip().upper() for col in df.columns]
+        return df
+    except Exception:
+        return pd.DataFrame()
 
-selected_exchange = st.sidebar.selectbox("Exchange Venue", list(exchange_mapping.keys()))
-active_segment = exchange_mapping[selected_exchange]["segment"]
-default_security_id = exchange_mapping[selected_exchange]["default_id"]
+master_df = load_master_scrip_database()
 
-security_id_input = st.sidebar.text_input("Security ID / Scrip ID", value=str(default_security_id))
+if master_df.empty:
+    st.error("⚠️ Master scrip file (`api-scrip-master.csv`) not found in workspace!")
+    st.stop()
+
+# Dynamically identify columns in scrip master
+sym_col = next((c for c in master_df.columns if 'SYMBOL' in c or 'TRADING' in c), master_df.columns[1])
+seg_col = next((c for c in master_df.columns if 'SEGMENT' in c or 'EXCH' in c), master_df.columns[0])
+id_col = next((c for c in master_df.columns if 'ID' in c), master_df.columns[0])
+
+# Filter all derivative and index segments: NSE_FNO, BSE_FNO, MCX_COMM, IDX_I
+valid_segments = ['IDX_I', 'NSE_FNO', 'BSE_FNO', 'MCX_COMM']
+fno_master_df = master_df[master_df[seg_col].astype(str).str.upper().isin(valid_segments)].copy()
+
+# Asset Class Selector
+asset_class = st.sidebar.selectbox(
+    "Select Asset Class",
+    ["Major Indices (Nifty, BankNifty, Sensex)", "NSE F&O Stocks", "MCX Commodities (Gold, Crude, etc.)"]
+)
+
+if "Indices" in asset_class:
+    default_indices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"]
+    all_syms = fno_master_df[sym_col].dropna().unique().tolist()
+    symbol_choices = [s for s in default_indices if s in all_syms]
+    if not symbol_choices:
+        symbol_choices = ["NIFTY", "SENSEX"]
+elif "Stocks" in asset_class:
+    stock_df = fno_master_df[fno_master_df[seg_col].astype(str).str.upper() == 'NSE_FNO']
+    symbol_choices = sorted(list(set([str(s).split('-')[0] for s in stock_df[sym_col].dropna().unique() if len(str(s)) < 15])))
+else:
+    mcx_df = fno_master_df[fno_master_df[seg_col].astype(str).str.upper() == 'MCX_COMM']
+    symbol_choices = sorted(list(set([str(s).split('-')[0] for s in mcx_df[sym_col].dropna().unique() if len(str(s)) < 15])))
+
+if not symbol_choices:
+    symbol_choices = ["NIFTY"]
+
+selected_symbol = st.sidebar.selectbox("Select Underlying Symbol", symbol_choices)
+
+# Match row in master dataframe
+matched_row = fno_master_df[fno_master_df[sym_col] == selected_symbol]
+if matched_row.empty:
+    matched_row = fno_master_df[fno_master_df[sym_col].str.startswith(selected_symbol, na=False)]
+
+if not matched_row.empty:
+    resolved_sec_id = str(matched_row.iloc[0][id_col])
+    resolved_segment = str(matched_row.iloc[0][seg_col])
+else:
+    resolved_sec_id = "13"
+    resolved_segment = "IDX_I"
+
+st.sidebar.info(f"📌 Resolved ID: `{resolved_sec_id}` | Segment: `{resolved_segment}`")
 
 # Dynamic Expiry Fetcher from Dhan Server
 @st.cache_data(ttl=60)
-def fetch_institutional_expiries(client_id, access_token, sec_id, seg):
+def fetch_dhan_expiries(client_id, access_token, sec_id, seg):
     url = "https://api.dhan.co/v2/optionchain/expirylist"
     headers = {"access-token": access_token.strip(), "client-id": client_id.strip(), "Content-Type": "application/json"}
     payload = {"UnderlyingScrip": int(sec_id), "UnderlyingSeg": str(seg).strip()}
@@ -123,11 +174,11 @@ def fetch_institutional_expiries(client_id, access_token, sec_id, seg):
     return [datetime.now().strftime("%Y-%m-%d")]
 
 with st.spinner("Syncing active contract expiries..."):
-    expiry_contracts = fetch_institutional_expiries(
+    expiry_contracts = fetch_dhan_expiries(
         st.session_state.client_id, 
         st.session_state.access_token, 
-        security_id_input, 
-        active_segment
+        resolved_sec_id, 
+        resolved_segment
     )
 
 selected_contract_expiry = st.sidebar.selectbox("Active Contract Expiry", expiry_contracts)
@@ -142,13 +193,11 @@ st.sidebar.markdown("---")
 refresh_market_data = st.sidebar.button("🔄 Refresh Data Feed")
 
 # ==============================================================================
-# STEP 3: HIGH-PERFORMANCE DATA PIPELINE & GREEKS ENGINE
+# STEP 3: HIGH-PERFORMANCE DATA PIPELINE
 # ==============================================================================
 @st.cache_data(ttl=10)
-def execute_institutional_query(client_id, access_token, sec_id, seg, exp):
+def execute_universal_query(client_id, access_token, sec_id, seg, exp):
     url = "https://api.dhan.co/v2/optionchain"
-    headers = {"access-token": client_id.strip() and access_token.strip(), "client-id": client_id.strip(), "Content-Type": "application/json"}
-    # Note: Headers dictionary fix
     headers = {"access-token": access_token.strip(), "client-id": client_id.strip(), "Content-Type": "application/json"}
     payload = {"UnderlyingScrip": int(sec_id), "UnderlyingSeg": str(seg).strip(), "Expiry": str(exp).strip()}
     
@@ -169,20 +218,25 @@ def execute_institutional_query(client_id, access_token, sec_id, seg, exp):
                 ce = obj.get("ce", {})
                 pe = obj.get("pe", {})
                 
+                ce_oi = int(ce.get("oi", 0))
+                pe_oi = int(pe.get("oi", 0))
+                ce_vol = int(ce.get("volume", 0))
+                pe_vol = int(pe.get("volume", 0))
+                
                 records.append({
                     "Strike": int(s_val),
-                    "CE_OI": int(ce.get("oi", 0)),
-                    "CE_Chg_OI": int(ce.get("oi", 0)) - int(ce.get("previous_oi", 0)),
-                    "CE_Volume": int(ce.get("volume", 0)),
+                    "CE_OI": ce_oi,
+                    "CE_Chg_OI": ce_oi - int(ce.get("previous_oi", 0)),
+                    "CE_Volume": ce_vol,
                     "CE_IV": float(ce.get("iv", 16.0)),
                     "CE_LTP": float(ce.get("last_price", 0.0)),
                     "PE_LTP": float(pe.get("last_price", 0.0)),
                     "PE_IV": float(pe.get("iv", 16.0)),
-                    "PE_Volume": int(pe.get("volume", 0)),
-                    "PE_Chg_OI": int(pe.get("oi", 0)) - int(pe.get("previous_oi", 0)),
-                    "PE_OI": int(pe.get("oi", 0)),
+                    "PE_Volume": pe_vol,
+                    "PE_Chg_OI": pe_oi - int(pe.get("previous_oi", 0)),
+                    "PE_OI": pe_oi,
                     "CE_Gamma": float(ce.get("gamma", 0.0018)),
-                    "PE_Gamma": float(ce.get("gamma", 0.0018)),
+                    "PE_Gamma": float(pe.get("gamma", 0.0018)),
                     "CE_Delta": float(ce.get("delta", 0.50)),
                     "PE_Delta": float(ce.get("delta", -0.50))
                 })
@@ -198,12 +252,12 @@ def execute_institutional_query(client_id, access_token, sec_id, seg, exp):
         return pd.DataFrame(), 0.0
 
 if "raw_df" not in st.session_state or refresh_market_data:
-    with st.spinner("Fetching institutional order book and options matrix..."):
-        raw_df, spot_price = execute_institutional_query(
+    with st.spinner(f"Fetching live derivatives chain for {selected_symbol}..."):
+        raw_df, spot_price = execute_universal_query(
             st.session_state.client_id, 
             st.session_state.access_token, 
-            security_id_input, 
-            active_segment, 
+            resolved_sec_id, 
+            resolved_segment, 
             selected_contract_expiry
         )
         st.session_state.raw_df = raw_df
@@ -213,7 +267,7 @@ full_chain_df = st.session_state.raw_df
 spot_price = st.session_state.spot_price
 
 if full_chain_df.empty:
-    st.info("💡 बाजार से डेटा प्राप्त नहीं हुआ। कृपया सुनिश्चित करें कि Security ID, Segment और Expiry Date पूरी तरह सही हैं।")
+    st.info("💡 बाजार से डेटा प्राप्त नहीं हुआ। कृपया सुनिश्चित करें कि बाजार खुला है और चुनी गई एक्सपायरी डेट वैध है।")
     st.stop()
 
 # --- STRIKE FILTER ENGINE ---
@@ -231,114 +285,185 @@ elif "±25" in strike_span_mode:
 else:
     df = full_chain_df.drop(columns=['Distance']).reset_index(drop=True)
 
-# --- ADVANCED QUANT ANALYTICS (PCR & MAX PAIN) ---
-total_ce_open_interest = full_chain_df['CE_OI'].sum()
-total_pe_open_interest = full_chain_df['PE_OI'].sum()
-market_pcr = round(total_pe_open_interest / total_ce_open_interest, 2) if total_ce_open_interest > 0 else 0.0
+# --- QUANT ANALYTICS CALCULATIONS ---
+total_ce_oi = full_chain_df['CE_OI'].sum()
+total_pe_oi = full_chain_df['PE_OI'].sum()
+oi_pcr = round(total_pe_oi / total_ce_oi, 2) if total_ce_oi > 0 else 0.0
+
+total_ce_vol = full_chain_df['CE_Volume'].sum()
+total_pe_vol = full_chain_df['PE_Volume'].sum()
+volume_pcr = round(total_pe_vol / total_ce_vol, 2) if total_ce_vol > 0 else 0.0
 
 strikes_arr = full_chain_df['Strike'].values
 ce_oi_arr = full_chain_df['CE_OI'].values
 pe_oi_arr = full_chain_df['PE_OI'].values
 
-optimal_max_pain = strikes_arr[0]
-minimum_settlement_payout = float('inf')
-payout_curve_records = []
+max_pain_strike = strikes_arr[0]
+min_payout = float('inf')
+payout_records = []
 
-for s_strike in strikes_arr:
-    call_payout = np.sum(np.maximum(0, s_strike - strikes_arr) * ce_oi_arr)
-    put_payout = np.sum(np.maximum(0, strikes_arr - s_strike) * pe_oi_arr)
-    aggregate_loss = call_payout + put_payout
-    payout_curve_records.append({"Strike": s_strike, "Aggregate_Payout": aggregate_loss})
-    if aggregate_loss < minimum_settlement_payout:
-        minimum_settlement_payout = aggregate_loss
-        optimal_max_pain = s_strike
+for s in strikes_arr:
+    c_pay = np.sum(np.maximum(0, s - strikes_arr) * ce_oi_arr)
+    p_pay = np.sum(np.maximum(0, strikes_arr - s) * pe_oi_arr)
+    total_loss = c_pay + p_pay
+    payout_records.append({"Strike": s, "Payout": total_loss})
+    if total_loss < min_payout:
+        min_payout = total_loss
+        max_pain_strike = s
 
-payout_surface_df = pd.DataFrame(payout_curve_records)
+payout_df = pd.DataFrame(payout_records)
 
 # ==============================================================================
-# STEP 4: PROFESSIONAL MODULE VIEWS
+# STEP 4: FULL GRAPHICAL MODULE VIEWS
 # ==============================================================================
-if menu == "📊 Macro Pulse & Dashboard":
-    st.markdown(f"### 📊 Institutional Macro Overview — `{selected_exchange}` ({selected_contract_expiry})")
+if menu == "📊 Macro Pulse & Graphical Overview":
+    st.markdown(f"### 📊 Graphical Overview — `{selected_symbol}` ({selected_contract_expiry})")
     
-    market_sentiment = "🟢 BULLISH / PUT WRITING DOMINANT" if market_pcr > 1.05 else ("🔴 BEARISH / CALL WRITING HEAVY" if market_pcr < 0.90 else "⚪ NEUTRAL / BALANCED DELTA SPREAD")
-    st.info(f"**Quantitative Sentiment Model:** {market_sentiment}")
+    bias = "🟢 BULLISH / PUT WRITING DOMINANT" if oi_pcr > 1.05 else ("🔴 BEARISH / CALL WRITING HEAVY" if oi_pcr < 0.90 else "⚪ NEUTRAL / BALANCED SPREAD")
+    st.info(f"**Quantitative Bias:** {bias}")
     
     c1, c2, c3, c4 = st.columns(4)
     c1.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-    c1.metric("Live Spot Reference", f"₹{spot_price:,.2f}", f"Venue: {active_segment}")
+    c1.metric("Live Spot Price", f"₹{spot_price:,.2f}", f"Segment: {resolved_segment}")
     c1.markdown("</div>", unsafe_allow_html=True)
     
     c2.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-    c2.metric("Put-Call Ratio (PCR)", str(market_pcr), "Institutional Sentiment")
+    c2.metric("OI PCR Ratio", str(oi_pcr), f"Vol PCR: {volume_pcr}")
     c2.markdown("</div>", unsafe_allow_html=True)
     
     c3.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-    c3.metric("Total Call OI", f"{total_ce_open_interest:,}", "Open Interest Pool")
+    c3.metric("Total Call OI", f"{total_ce_oi:,}", "Open Interest")
     c3.markdown("</div>", unsafe_allow_html=True)
     
     c4.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-    c4.metric("Max Pain Settlement", f"₹{optimal_max_pain:,.0f}", "Gravity Center")
+    c4.metric("Max Pain Gravity", f"₹{max_pain_strike:,.0f}", "Settlement Center")
     c4.markdown("</div>", unsafe_allow_html=True)
-
-elif menu == "⛓️ Multi-Strike Option Matrix":
-    st.markdown(f"### ⛓️ Order Book & Option Chain Matrix — `{selected_exchange}`")
-    st.markdown(f"**Spot Reference:** ₹{spot_price:,.2f} | **Expiry:** {selected_contract_expiry} | **Filter:** {strike_span_mode}")
-    
-    matrix_columns = [
-        "CE_OI", "CE_Chg_OI", "CE_Volume", "CE_IV", "CE_LTP", 
-        "Strike", 
-        "PE_LTP", "PE_IV", "PE_Volume", "PE_Chg_OI", "PE_OI"
-    ]
-    
-    st.dataframe(df[matrix_columns], use_container_width=True, height=600)
-
-elif menu == "📈 PCR & Max Pain Surface":
-    st.markdown("### 📈 Quantitative Settlement & Max Pain Payout Curve")
-    
-    col_a, col_b, col_c = st.columns(3)
-    col_a.metric("Calculated Max Pain", f"₹{optimal_max_pain:,.0f}")
-    col_b.metric("Open Interest PCR", str(market_pcr))
-    col_c.metric("Underlying Spot", f"₹{spot_price:,.2f}")
     
     st.markdown("---")
-    if not payout_surface_df.empty:
-        fig_payout = go.Figure()
-        fig_payout.add_trace(go.Scatter(
-            x=payout_surface_df['Strike'].astype(str), y=payout_surface_df['Aggregate_Payout'],
-            mode='lines+markers', name='Settlement Payout Risk',
-            line=dict(color='#00cc96', width=3), fill='tozeroy'
-        ))
-        fig_payout.update_layout(
-            template="plotly_dark", 
-            paper_bgcolor="#0b0e14", plot_bgcolor="#11161d",
-            xaxis=dict(type='category', title="Strike Price"), 
-            yaxis_title="Total Aggregate Loss (₹)"
-        )
-        st.plotly_chart(fig_payout, use_container_width=True)
+    st.markdown("### 📊 Strike-wise Open Interest (Call vs Put) Distribution Graph")
+    
+    fig_oi = go.Figure()
+    fig_oi.add_trace(go.Bar(x=df['Strike'].astype(str), y=df['CE_OI'], name='Call OI (Resistance)', marker_color='#ff4b4b'))
+    fig_oi.add_trace(go.Bar(x=df['Strike'].astype(str), y=df['PE_OI'], name='Put OI (Support)', marker_color='#00cc96'))
+    fig_oi.update_layout(
+        barmode='group', template="plotly_dark",
+        paper_bgcolor="#0b0e14", plot_bgcolor="#11161d",
+        xaxis=dict(type='category', title="Strike Price"), yaxis_title="Open Interest (Contracts)"
+    )
+    st.plotly_chart(fig_oi, use_container_width=True)
 
-elif menu == "⚡ Gamma Exposure (GEX) & Walls":
-    st.markdown("### ⚡ Institutional Gamma Exposure (GEX) & Liquidity Walls")
+elif menu == "📈 OI, Volume PCR & Price Relations":
+    st.markdown(f"### 📈 Graphical Relationship: Price, OI PCR & Volume PCR — `{selected_symbol}`")
+    st.markdown("इस ग्राफ में आप स्पॉट प्राइस के आस-पास के स्ट्राइक्स पर ओपन इंटरेस्ट और वॉल्यूम के बीच का रिलेशन देख सकते हैं।")
+    
+    col_a, col_b, col_c = st.columns(3)
+    col_a.metric("Spot Price", f"₹{spot_price:,.2f}")
+    col_b.metric("OI PCR", str(oi_pcr))
+    col_c.metric("Volume PCR", str(volume_pcr))
+    
+    st.markdown("---")
+    
+    # Graphical representation of OI Buildup (Change in OI) vs Strike
+    fig_buildup = go.Figure()
+    fig_buildup.add_trace(go.Bar(x=df['Strike'].astype(str), y=df['CE_Chg_OI'], name='Call Change in OI', marker_color='#e63946'))
+    fig_buildup.add_trace(go.Bar(x=df['Strike'].astype(str), y=df['PE_Chg_OI'], name='Put Change in OI', marker_color='#2a9d8f'))
+    fig_buildup.update_layout(
+        title="<b>Strike-wise OI Buildup (Change in Open Interest)</b>",
+        barmode='relative', template="plotly_dark",
+        paper_bgcolor="#0b0e14", plot_bgcolor="#11161d",
+        xaxis=dict(type='category', title="Strike Price"), yaxis_title="Change in OI"
+    )
+    st.plotly_chart(fig_buildup, use_container_width=True)
+    
+    # Volume Distribution Graph
+    fig_vol = go.Figure()
+    fig_vol.add_trace(go.Scatter(x=df['Strike'].astype(str), y=df['CE_Volume'], mode='lines+markers', name='Call Volume', line=dict(color='#ff6b6b', width=3)))
+    fig_vol.add_trace(go.Scatter(x=df['Strike'].astype(str), y=df['PE_Volume'], mode='lines+markers', name='Put Volume', line=dict(color='#48cae4', width=3)))
+    fig_vol.update_layout(
+        title="<b>Traded Volume Distribution across Strikes</b>",
+        template="plotly_dark",
+        paper_bgcolor="#0b0e14", plot_bgcolor="#11161d",
+        xaxis=dict(type='category', title="Strike Price"), yaxis_title="Volume"
+    )
+    st.plotly_chart(fig_vol, use_container_width=True)
+
+elif menu == "⛓️ Option Chain Matrix (S&R Highlighting)":
+    st.markdown(f"### ⛓️ Option Chain Matrix & Support/Resistance Heatmap — `{selected_symbol}`")
+    st.markdown(f"**Spot Price:** ₹{spot_price:,.2f} | **Expiry:** {selected_contract_expiry}")
+    st.markdown("<small style='color: #8b949e;'>🔴 Highlighting Call Walls (Resistance) | 🟢 Highlighting Put Floors (Support) with High-Contrast Text</small>", unsafe_allow_html=True)
+    
+    cols_matrix = ["CE_OI", "CE_Chg_OI", "CE_Volume", "CE_IV", "CE_LTP", "Strike", "PE_LTP", "PE_IV", "PE_Volume", "PE_Chg_OI", "PE_OI"]
+    sub_matrix = df[cols_matrix].copy()
+    
+    ce_q85 = sub_matrix['CE_OI'].quantile(0.85) if not sub_matrix.empty else 0
+    pe_q85 = sub_matrix['PE_OI'].quantile(0.85) if not sub_matrix.empty else 0
+    
+    def highlight_sr(row):
+        st_list = [''] * len(row)
+        if row['CE_OI'] >= ce_q85 and ce_q85 > 0:
+            idx = sub_matrix.columns.get_loc('CE_OI')
+            st_list[idx] = 'background-color: #611a1a; color: #ffb3b3; font-weight: bold;'
+        if row['PE_OI'] >= pe_q85 and pe_q85 > 0:
+            idx = sub_matrix.columns.get_loc('PE_OI')
+            st_list[idx] = 'background-color: #0f4c2c; color: #b3ffcc; font-weight: bold;'
+        return st_list
+
+    st.dataframe(sub_matrix.style.apply(highlight_sr, axis=1), use_container_width=True, height=600)
+
+elif menu == "📉 Max Pain & Settlement Payout Curve":
+    st.markdown(f"### 📉 Graphical Max Pain & Settlement Risk Curve — `{selected_symbol}`")
+    
+    col1, col2 = st.columns(2)
+    col1.metric("Calculated Max Pain Strike", f"₹{max_pain_strike:,.0f}")
+    col2.metric("Current Spot Price", f"₹{spot_price:,.2f}")
+    
+    st.markdown("---")
+    if not payout_df.empty:
+        fig_pain = go.Figure()
+        fig_pain.add_trace(go.Scatter(
+            x=payout_df['Strike'].astype(str), y=payout_df['Payout'],
+            mode='lines+markers', name='Total Settlement Payout Loss',
+            line=dict(color='#f77f00', width=3), fill='tozeroy'
+        ))
+        fig_pain.update_layout(
+            title="<b>Max Pain Gravity Curve (Lowest Payout Point = Settlement Center)</b>",
+            template="plotly_dark",
+            paper_bgcolor="#0b0e14", plot_bgcolor="#11161d",
+            xaxis=dict(type='category', title="Strike Price"), yaxis_title="Total Payout Loss (₹)"
+        )
+        st.plotly_chart(fig_pain, use_container_width=True)
+
+elif menu == "⚡ Gamma Exposure (GEX) & Dealer Walls":
+    st.markdown(f"### ⚡ Graphical Gamma Exposure (GEX) & Liquidity Walls — `{selected_symbol}`")
     
     df['CE_GEX'] = df['CE_OI'] * df['CE_Gamma'] * -100
     df['PE_GEX'] = df['PE_OI'] * df['PE_Gamma'] * 100
     
-    strike_str_arr = df['Strike'].astype(str)
-    fig_walls = go.Figure()
-    fig_walls.add_trace(go.Bar(x=strike_str_arr, y=df['CE_GEX'], name='Call Wall (Dealer Resistance)', marker_color='#ff4b4b'))
-    fig_walls.add_trace(go.Bar(x=strike_str_arr, y=df['PE_GEX'], name='Put Wall (Dealer Support)', marker_color='#00cc96'))
+    fig_gex = go.Figure()
+    fig_gex.add_trace(go.Bar(x=df['Strike'].astype(str), y=df['CE_GEX'], name='Call Wall (Dealer Resistance)', marker_color='#ef476f'))
+    fig_gex.add_trace(go.Bar(x=df['Strike'].astype(str), y=df['PE_GEX'], name='Put Wall (Dealer Support)', marker_color='#06d6a0'))
+    fig_gex.update_layout(
+        title="<b>Dealer Gamma Hedging Walls across Strikes</b>",
+        barmode='relative', template="plotly_dark",
+        paper_bgcolor="#0b0e14", plot_bgcolor="#11161d",
+        xaxis=dict(type='category', title="Strike Price"), yaxis_title="Gamma Exposure"
+    )
+    st.plotly_chart(fig_gex, use_container_width=True)
+
+elif menu == "📐 Greeks & Volatility Surface":
+    st.markdown(f"### 📐 Graphical Volatility & Greeks Sensitivity — `{selected_symbol}`")
     
-    fig_walls.update_layout(
-        barmode='relative', 
+    g_cols = ["Strike", "CE_IV", "CE_Delta", "CE_Gamma", "PE_Gamma", "PE_Delta", "PE_IV"]
+    st.dataframe(df[g_cols], use_container_width=True, height=400)
+    
+    st.markdown("---")
+    fig_iv = go.Figure()
+    fig_iv.add_trace(go.Scatter(x=df['Strike'].astype(str), y=df['CE_IV'], mode='lines+markers', name='Call IV (%)', line=dict(color='#ffd166', width=3)))
+    fig_iv.add_trace(go.Scatter(x=df['Strike'].astype(str), y=df['PE_IV'], mode='lines+markers', name='Put IV (%)', line=dict(color='#118ab2', width=3)))
+    fig_iv.update_layout(
+        title="<b>Implied Volatility (IV) Smile / Skew Graph</b>",
         template="plotly_dark",
         paper_bgcolor="#0b0e14", plot_bgcolor="#11161d",
-        xaxis=dict(type='category', title="Strike Price"),
-        yaxis_title="Gamma Exposure ($ / Delta)"
+        xaxis=dict(type='category', title="Strike Price"), yaxis_title="Implied Volatility (%)"
     )
-    st.plotly_chart(fig_walls, use_container_width=True)
-
-elif menu == "📐 Volatility & Greeks Matrix":
-    st.markdown("### 📐 Implied Volatility (IV) & Greeks Sensitivity Matrix")
-    
-    greeks_columns = ["Strike", "CE_IV", "CE_Delta", "CE_Gamma", "PE_Gamma", "PE_Delta", "PE_IV"]
-    st.dataframe(df[greeks_columns], use_container_width=True, height=550)
+    st.plotly_chart(fig_iv, use_container_width=True)
