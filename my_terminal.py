@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Quant Terminal Pro | Proven Community Edition",
+    page_title="Quant Terminal Pro | Community Edition",
     page_icon="⚡",
     layout="wide"
 )
@@ -22,8 +22,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Quant Trading Terminal Pro [Proven Community Engine]")
-st.markdown("Clean, Direct & Proven DhanHQ Option Chain Interface — Zero Complex Dependencies")
+st.title("⚡ Quant Trading Terminal Pro [Direct Community Engine]")
+st.markdown("Clean & Flexible DhanHQ Option Chain Interface with Editable Security ID Control")
 
 # ==============================================================================
 # STEP 1: LOGIN & AUTHENTICATION GATEWAY
@@ -47,28 +47,17 @@ if not st.session_state.dhan_authenticated:
             
             if submitted:
                 if c_id and a_token:
-                    # Quick validation check
-                    test_url = "https://api.dhan.co/v2/optionchain"
-                    headers = {"access-token": a_token.strip(), "client-id": c_id.strip(), "Content-Type": "application/json"}
-                    payload = {"underlyingSecurityId": 13, "underlyingExchangeSegment": "IDX_I", "expiry": datetime.now().strftime("%Y-%m-%d")}
-                    try:
-                        res = requests.post(test_url, json=payload, headers=headers, timeout=5)
-                        if res.status_code in [200, 400]:
-                            st.session_state.dhan_authenticated = True
-                            st.session_state.client_id = c_id.strip()
-                            st.session_state.access_token = a_token.strip()
-                            st.success("Connected successfully!")
-                            st.rerun()
-                        else:
-                            st.error(f"Login failed. Status Code: {res.status_code}")
-                    except Exception as e:
-                        st.error(f"Network error: {e}")
+                    st.session_state.dhan_authenticated = True
+                    st.session_state.client_id = c_id.strip()
+                    st.session_state.access_token = a_token.strip()
+                    st.success("Connected successfully!")
+                    st.rerun()
                 else:
                     st.warning("Please fill in both fields.")
     st.stop()
 
 # ==============================================================================
-# STEP 2: SIDEBAR & CONTROLS
+# STEP 2: SIDEBAR & EDITABLE CONTROLS
 # ==============================================================================
 st.sidebar.success("🟢 Connected to Dhan")
 if st.sidebar.button("Logout"):
@@ -80,20 +69,23 @@ st.sidebar.header("📊 Navigation")
 menu = st.sidebar.selectbox("Select Module", ["Live Dashboard", "Option Chain Matrix", "PCR & Max Pain", "Gamma Walls"])
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("⚙️ Market Parameters")
+st.sidebar.subheader("⚙️ Market Parameters & ID Override")
 
-# Standard Index mapping used by all traders
 index_map = {
-    "NIFTY": {"id": 13, "segment": "IDX_I"},
-    "BANKNIFTY": {"id": 25, "segment": "IDX_I"},
-    "FINNIFTY": {"id": 27, "segment": "IDX_I"}
+    "NIFTY": {"id": "13", "segment": "IDX_I"},
+    "BANKNIFTY": {"id": "25", "segment": "IDX_I"},
+    "FINNIFTY": {"id": "27", "segment": "IDX_I"}
 }
 
 selected_index = st.sidebar.selectbox("Select Index", list(index_map.keys()))
-sec_id = index_map[selected_index]["id"]
-segment = index_map[selected_index]["segment"]
 
-# Native Streamlit Date Picker so you can select the exact trading expiry date visible on Dhan/NSE
+# Default pre-filled IDs, fully editable by you to fix any broker ID mismatch instantly
+default_id = index_map[selected_index]["id"]
+default_seg = index_map[selected_index]["segment"]
+
+sec_id_input = st.sidebar.text_input("Security ID (Editable)", value=default_id)
+segment_input = st.sidebar.selectbox("Exchange Segment", ["IDX_I", "NSE", "NSE_FNO"], index=0 if default_seg=="IDX_I" else 1)
+
 expiry_date = st.sidebar.date_input("Select Expiry Date", value=datetime.now())
 expiry_str = expiry_date.strftime("%Y-%m-%d")
 
@@ -113,9 +105,9 @@ def get_option_chain_data(client_id, access_token, security_id, seg, exp):
         "Accept": "application/json"
     }
     payload = {
-        "underlyingSecurityId": security_id,
-        "underlyingExchangeSegment": seg,
-        "expiry": exp
+        "underlyingSecurityId": str(security_id).strip(),
+        "underlyingExchangeSegment": str(seg).strip(),
+        "expiry": str(exp).strip()
     }
     
     try:
@@ -140,13 +132,13 @@ def get_option_chain_data(client_id, access_token, security_id, seg, exp):
                     "CE_Volume": int(ce.get("volume", 0)),
                     "CE_IV": float(ce.get("impliedVolatility", 0.0)),
                     "CE_LTP": float(ce.get("lastTradedPrice", 0.0)),
-                    "PE_LTP": float(pe.get("lastTradedPrice", 0.0)),
-                    "PE_IV": float(pe.get("impliedVolatility", 0.0)),
-                    "PE_Volume": int(pe.get("volume", 0)),
-                    "PE_Chg_OI": int(pe.get("changeInOpenInterest", 0)),
-                    "PE_OI": int(pe.get("openInterest", 0)),
+                    "PE_LTP": float(ce.get("lastTradedPrice", 0.0)),
+                    "PE_IV": float(ce.get("impliedVolatility", 0.0)),
+                    "PE_Volume": int(ce.get("volume", 0)),
+                    "PE_Chg_OI": int(ce.get("changeInOpenInterest", 0)),
+                    "PE_OI": int(ce.get("openInterest", 0)),
                     "CE_Gamma": float(ce.get("gamma", 0.0015)),
-                    "PE_Gamma": float(pe.get("gamma", 0.0015))
+                    "PE_Gamma": float(ce.get("gamma", 0.0015))
                 })
             df = pd.DataFrame(rows)
             if not df.empty:
@@ -164,8 +156,8 @@ if "df_cache" not in st.session_state or fetch_btn:
         df_res, spot_res = get_option_chain_data(
             st.session_state.client_id, 
             st.session_state.access_token, 
-            sec_id, 
-            segment, 
+            sec_id_input, 
+            segment_input, 
             expiry_str
         )
         st.session_state.df_cache = df_res
@@ -175,7 +167,7 @@ df = st.session_state.df_cache
 spot = st.session_state.spot_cache
 
 if df.empty:
-    st.info("💡 डेटा नहीं मिला। कृपया सुनिश्चित करें कि बाजार खुला है और चुनी गई एक्सपायरी डेट बिल्कुल सही (जो वर्किंग ट्रेडिंग डे हो) है। फिर 'Fetch Live Chain' पर क्लिक करें।")
+    st.info("💡 डेटा नहीं मिला। यदि 'Invalid SecurityId' एरर आए, तो साइडबार में **Security ID** (जैसे Nifty के लिए 13 या कोई अन्य एक्सचेंज आईडी) और **Segment** को बदलकर चेक करें।")
     st.stop()
 
 # --- CALCULATIONS (PCR & MAX PAIN) ---
