@@ -14,7 +14,7 @@ st.set_page_config(
 
 # App Title & Header
 st.title("📈 Quant Trading Terminal Pro")
-st.markdown("Advanced F&O Analytics, Net Gamma, PCR, Max Pain & Professional Heatmaps")
+st.markdown("Advanced F&O Analytics, Greeks, Net Gamma, PCR & Full-Row Heatmaps")
 
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.header("Navigation")
@@ -23,7 +23,7 @@ menu = st.sidebar.selectbox(
     ["Live Dashboard", "Option Chain", "PCR & Max Pain", "Gamma & GEX Analysis", "Gamma Flip Alerts", "Broker API Settings"]
 )
 
-# --- EXPANDED MOCK OPTION CHAIN (सभी स्ट्राइक प्राइस के साथ) ---
+# --- EXPANDED MOCK OPTION CHAIN (With Greeks & All Strikes) ---
 def get_comprehensive_option_chain(symbol):
     base_spot = 23500 if symbol == "NIFTY" else (50200 if symbol == "BANKNIFTY" else 2950)
     step = 100 if symbol != "RELIANCE" else 20
@@ -33,13 +33,26 @@ def get_comprehensive_option_chain(symbol):
     data = []
     for s in strikes:
         data.append({
+            # Call Greeks & Data
             "CE_OI": np.random.randint(100000, 800000),
             "CE_Chg_OI": np.random.randint(-20000, 30000),
             "CE_Volume": np.random.randint(50000, 300000),
             "CE_IV": round(np.random.uniform(12.0, 30.0), 2),
+            "CE_Delta": round(np.random.uniform(0.01, 0.99), 2),
+            "CE_Gamma": round(np.random.uniform(0.0001, 0.0050), 4),
+            "CE_Theta": round(np.random.uniform(-15.0, -1.0), 2),
+            "CE_Vega": round(np.random.uniform(2.0, 25.0), 2),
             "CE_LTP": round(max(1.0, (base_spot - s) * 0.1 + np.random.uniform(20, 150)), 2),
+            
+            # Strike Price
             "Strike": s,
+            
+            # Put Greeks & Data
             "PE_LTP": round(max(1.0, (s - base_spot) * 0.1 + np.random.uniform(20, 150)), 2),
+            "PE_Delta": round(np.random.uniform(-0.99, -0.01), 2),
+            "PE_Gamma": round(np.random.uniform(0.0001, 0.0050), 4),
+            "PE_Theta": round(np.random.uniform(-15.0, -1.0), 2),
+            "PE_Vega": round(np.random.uniform(2.0, 25.0), 2),
             "PE_IV": round(np.random.uniform(12.0, 30.0), 2),
             "PE_Volume": np.random.randint(50000, 300000),
             "PE_Chg_OI": np.random.randint(-20000, 30000),
@@ -75,9 +88,9 @@ if menu == "Live Dashboard":
     col3.metric("Net Gamma State", "NEGATIVE", "-450.2 (High Volatility)", delta_color="inverse")
     col4.metric("Max Pain Strike", "₹23,500", "Writer Profit Zone")
 
-# --- 2. OPTION CHAIN (Color-Coded Heatmap & All Strikes) ---
+# --- 2. OPTION CHAIN (Full-Row Color-Coded Heatmap & Greeks) ---
 elif menu == "Option Chain":
-    st.subheader("⛓️ Comprehensive Option Chain with OI Support & Resistance Heatmap")
+    st.subheader("⛓️ Comprehensive Option Chain with Greeks & Full-Row Heatmap")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -87,37 +100,37 @@ elif menu == "Option Chain":
     
     df = get_comprehensive_option_chain(symbol)
     
-    st.markdown(f"**Showing options chain heatmap for {symbol} (Expiry: {expiry})** — Dark red indicates heavy Call OI (Resistance), and dark green indicates heavy Put OI (Support).")
+    st.markdown(f"**Showing full options chain with Greeks for {symbol} (Expiry: {expiry})** — High Call OI colors the entire row red (Resistance), and high Put OI colors the entire row green (Support).")
     
-    # Heatmap Styling Functions (Updated to .map for Pandas compatibility)
-    def color_call_oi(val):
-        if val > 600000:
-            return 'background-color: #ff4d4d; color: white; font-weight: bold;'
-        elif val > 400000:
-            return 'background-color: #ff9999; color: black;'
-        elif val > 200000:
-            return 'background-color: #ffcccc; color: black;'
-        return ''
+    # Full-Row Heatmap Styling Functions based on OI values
+    def highlight_rows(row):
+        ce_val = row['CE_OI']
+        pe_val = row['PE_OI']
+        
+        # Call side heavy (Resistance - Red Shades)
+        if ce_val > 600000:
+            return ['background-color: rgba(255, 77, 77, 0.25); color: inherit;'] * len(row)
+        elif ce_val > 400000:
+            return ['background-color: rgba(255, 153, 153, 0.18); color: inherit;'] * len(row)
+            
+        # Put side heavy (Support - Green Shades)
+        if pe_val > 600000:
+            return ['background-color: rgba(46, 184, 46, 0.25); color: inherit;'] * len(row)
+        elif pe_val > 400000:
+            return ['background-color: rgba(133, 224, 133, 0.18); color: inherit;'] * len(row)
+            
+        return [''] * len(row)
 
-    def color_put_oi(val):
-        if val > 600000:
-            return 'background-color: #2eb82e; color: white; font-weight: bold;'
-        elif val > 400000:
-            return 'background-color: #85e085; color: black;'
-        elif val > 200000:
-            return 'background-color: #c2f0c2; color: black;'
-        return ''
-
+    # Columns including Greeks
     columns_order = [
-        "CE_OI", "CE_Chg_OI", "CE_Volume", "CE_IV", "CE_LTP", 
+        "CE_OI", "CE_Chg_OI", "CE_Volume", "CE_IV", "CE_Delta", "CE_Gamma", "CE_Theta", "CE_Vega", "CE_LTP", 
         "Strike", 
-        "PE_LTP", "PE_IV", "PE_Volume", "PE_Chg_OI", "PE_OI"
+        "PE_LTP", "PE_Delta", "PE_Gamma", "PE_Theta", "PE_Vega", "PE_IV", "PE_Volume", "PE_Chg_OI", "PE_OI"
     ]
     
-    # यहाँ applymap की जगह map का उपयोग किया गया है
-    df_styled = df[columns_order].style.map(color_call_oi, subset=['CE_OI']).map(color_put_oi, subset=['PE_OI'])
+    df_styled = df[columns_order].style.apply(highlight_rows, axis=1)
     
-    st.dataframe(df_styled, use_container_width=True, height=500)
+    st.dataframe(df_styled, use_container_width=True, height=550)
 
 # --- 3. PCR & MAX PAIN (Fixed Strike Category Charts) ---
 elif menu == "PCR & Max Pain":
