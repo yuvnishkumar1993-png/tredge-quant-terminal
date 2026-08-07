@@ -14,7 +14,7 @@ st.set_page_config(
 
 # App Title & Header
 st.title("📈 Quant Trading Terminal Pro [Institutional Edition]")
-st.markdown("Advanced F&O Analytics with Full-Width Charts, GEX Walls & IV Skew Analysis")
+st.markdown("Advanced F&O Analytics with Dynamic Strike Filtering, Bar Charts & Real-Time Recalculation")
 
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.header("Navigation")
@@ -38,7 +38,7 @@ strike_range_mode = st.sidebar.radio("Select Strike Span", ["±10 Strikes (Intra
 
 # --- REAL OPTION CHAIN DATASET ENGINE ---
 @st.cache_data
-def get_user_option_chain(symbol="NIFTY"):
+def get_user_option_chain(symbol="NIFTY", range_mode="All Comprehensive Strikes"):
     raw_data = [
         (21600, 0, 7, 2, 0.0, 2965.15, 0.30, 40.55, 67076, -4893, 44659),
         (21650, 0, 0, 0, 0.0, 2748.95, 0.35, 40.41, 3347, 429, 1613),
@@ -175,10 +175,10 @@ def get_user_option_chain(symbol="NIFTY"):
         })
     df_full = pd.DataFrame(df_list)
 
-    if "±10" in strike_range_mode:
+    if "±10" in range_mode:
         atm_idx = (df_full['Strike'] - spot_approx).abs().idxmin()
         df_filtered = df_full.iloc[max(0, atm_idx-10): min(len(df_full), atm_idx+11)]
-    elif "±25" in strike_range_mode:
+    elif "±25" in range_mode:
         atm_idx = (df_full['Strike'] - spot_approx).abs().idxmin()
         df_filtered = df_full.iloc[max(0, atm_idx-25): min(len(df_full), atm_idx+26)]
     else:
@@ -186,8 +186,12 @@ def get_user_option_chain(symbol="NIFTY"):
 
     return df_filtered
 
-df = get_user_option_chain()
-total_ce, total_pe = df['CE_OI'].sum(), df['PE_OI'].sum()
+# Fetch filtered dataframe based on sidebar option
+df = get_user_option_chain("NIFTY", strike_range_mode)
+
+# Dynamic local calculations based on current filtered view
+total_ce = df['CE_OI'].sum() if not df.empty else 1
+total_pe = df['PE_OI'].sum() if not df.empty else 0
 pcr_oi = round(total_pe / total_ce, 2) if total_ce > 0 else 0
 max_pain = df.loc[df['CE_OI'].idxmax(), 'Strike'] if not df.empty else 24600
 
@@ -215,7 +219,7 @@ elif menu == "Option Chain":
     cols = ["CE_OI", "CE_Chg_OI", "CE_Volume", "CE_IV", "CE_Delta", "CE_Gamma", "CE_Theta", "CE_Vega", "CE_LTP", "Strike", "PE_LTP", "PE_Delta", "PE_Gamma", "PE_Theta", "PE_Vega", "PE_IV", "PE_Volume", "PE_Chg_OI", "PE_OI"]
     st.dataframe(df[cols].style.apply(highlight_rows, axis=1), use_container_width=True, height=550)
 
-# --- 3. PCR & MAX PAIN (Full-Width Charts & IV Skew Included) ---
+# --- 3. PCR & MAX PAIN (Grouped Bar Charts & IV Skew Restored) ---
 elif menu == "PCR & Max Pain":
     st.subheader("📉 PCR, Max Pain & IV Skew Analysis")
     bias = "Bullish Support Dominant (Put Writers Active)" if pcr_oi > 1.05 else "Bearish Resistance Dominant (Call Writers Active)"
@@ -223,11 +227,12 @@ elif menu == "PCR & Max Pain":
     
     strike_str = df['Strike'].astype(str)
     
-    # Open Interest Wave Chart (Legend moved to Top Center for full width)
+    # Open Interest Grouped Bar Chart (Legends moved to Top Center for full width)
     fig_oi = go.Figure()
-    fig_oi.add_trace(go.Scatter(x=strike_str, y=df['CE_OI'], name='Call OI (Resistance)', mode='lines', fill='tozeroy', line=dict(color='#ef553b', width=2)))
-    fig_oi.add_trace(go.Scatter(x=strike_str, y=df['PE_OI'], name='Put OI (Support)', mode='lines', fill='tozeroy', line=dict(color='#00cc96', width=2)))
+    fig_oi.add_trace(go.Bar(x=strike_str, y=df['CE_OI'], name='Call OI (Resistance)', marker_color='#ef553b'))
+    fig_oi.add_trace(go.Bar(x=strike_str, y=df['PE_OI'], name='Put OI (Support)', marker_color='#00cc96'))
     fig_oi.update_layout(
+        barmode='group',
         xaxis=dict(type='category', title="Strike Price", tickangle=-30),
         yaxis_title="Open Interest",
         template="plotly_white",
@@ -239,7 +244,7 @@ elif menu == "PCR & Max Pain":
     st.markdown("---")
     st.subheader("🌊 Implied Volatility (IV Skew / Smirk Curve)")
     
-    # IV Skew Chart (Restored fully as requested)
+    # IV Skew Bar / Line Chart Restored
     fig_iv = go.Figure()
     fig_iv.add_trace(go.Scatter(x=strike_str, y=df['CE_IV'], name='Call IV %', mode='lines+markers', line=dict(color='#ef553b', width=2)))
     fig_iv.add_trace(go.Scatter(x=strike_str, y=df['PE_IV'], name='Put IV %', mode='lines+markers', line=dict(color='#00cc96', width=2)))
@@ -277,9 +282,10 @@ elif menu == "Historical Time-Travel":
     t = st.select_slider("Select Time Period", ["09:20 AM", "11:00 AM", "01:30 PM", "03:15 PM (Live)"])
     
     fig_hist = go.Figure()
-    fig_hist.add_trace(go.Scatter(x=df['Strike'].astype(str), y=df['CE_OI'], name=f'Call OI ({t})', mode='lines', fill='tozeroy', line=dict(color='#ff6666', width=2)))
-    fig_hist.add_trace(go.Scatter(x=df['Strike'].astype(str), y=df['PE_OI'], name=f'Put OI ({t})', mode='lines', fill='tozeroy', line=dict(color='#33cc66', width=2)))
+    fig_hist.add_trace(go.Bar(x=strike_str, y=df['CE_OI'], name=f'Call OI ({t})', marker_color='#ff6666'))
+    fig_hist.add_trace(go.Bar(x=strike_str, y=df['PE_OI'], name=f'Put OI ({t})', marker_color='#33cc66'))
     fig_hist.update_layout(
+        barmode='group',
         xaxis=dict(type='category', title="Strike Price", tickangle=-30),
         yaxis_title="Historical OI",
         template="plotly_white",
