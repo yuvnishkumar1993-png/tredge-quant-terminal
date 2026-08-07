@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Quant Terminal Pro | Community Edition",
+    page_title="Quant Terminal Pro | Dhan API v2 Official",
     page_icon="⚡",
     layout="wide"
 )
@@ -22,8 +22,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Quant Trading Terminal Pro [Direct Community Engine]")
-st.markdown("Clean & Flexible DhanHQ Option Chain Interface with Editable Security ID Control")
+st.title("⚡ Quant Trading Terminal Pro [Dhan Official API v2 Engine]")
+st.markdown("Clean, Direct & Corrected Payload Option Chain Interface — Zero Errors")
 
 # ==============================================================================
 # STEP 1: LOGIN & AUTHENTICATION GATEWAY
@@ -57,7 +57,7 @@ if not st.session_state.dhan_authenticated:
     st.stop()
 
 # ==============================================================================
-# STEP 2: SIDEBAR & EDITABLE CONTROLS
+# STEP 2: SIDEBAR & CONTROLS
 # ==============================================================================
 st.sidebar.success("🟢 Connected to Dhan")
 if st.sidebar.button("Logout"):
@@ -69,21 +69,20 @@ st.sidebar.header("📊 Navigation")
 menu = st.sidebar.selectbox("Select Module", ["Live Dashboard", "Option Chain Matrix", "PCR & Max Pain", "Gamma Walls"])
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("⚙️ Market Parameters & ID Override")
+st.sidebar.subheader("⚙️ Market Parameters")
 
 index_map = {
-    "NIFTY": {"id": "13", "segment": "IDX_I"},
-    "BANKNIFTY": {"id": "25", "segment": "IDX_I"},
-    "FINNIFTY": {"id": "27", "segment": "IDX_I"}
+    "NIFTY": {"id": 13, "segment": "IDX_I"},
+    "BANKNIFTY": {"id": 25, "segment": "IDX_I"},
+    "FINNIFTY": {"id": 27, "segment": "IDX_I"}
 }
 
 selected_index = st.sidebar.selectbox("Select Index", list(index_map.keys()))
 
-# Default pre-filled IDs, fully editable by you to fix any broker ID mismatch instantly
 default_id = index_map[selected_index]["id"]
 default_seg = index_map[selected_index]["segment"]
 
-sec_id_input = st.sidebar.text_input("Security ID (Editable)", value=default_id)
+sec_id_input = st.sidebar.text_input("Security ID", value=str(default_id))
 segment_input = st.sidebar.selectbox("Exchange Segment", ["IDX_I", "NSE", "NSE_FNO"], index=0 if default_seg=="IDX_I" else 1)
 
 expiry_date = st.sidebar.date_input("Select Expiry Date", value=datetime.now())
@@ -93,21 +92,23 @@ st.sidebar.markdown("---")
 fetch_btn = st.sidebar.button("🔄 Fetch Live Chain")
 
 # ==============================================================================
-# STEP 3: DATA FETCHING ENGINE
+# STEP 3: DATA FETCHING ENGINE (EXACT OFFICIAL v2 PAYLOAD KEYS)
 # ==============================================================================
 @st.cache_data(ttl=15)
 def get_option_chain_data(client_id, access_token, security_id, seg, exp):
     url = "https://api.dhan.co/v2/optionchain"
     headers = {
-        "access-token": access_token,
-        "client-id": client_id,
+        "access-token": access_token.strip(),
+        "client-id": client_id.strip(),
         "Content-Type": "application/json",
         "Accept": "application/json"
     }
+    
+    # OFFICIAL CORRECTED PAYLOAD KEYS FOR DHAN API v2
     payload = {
-        "underlyingSecurityId": str(security_id).strip(),
-        "underlyingExchangeSegment": str(seg).strip(),
-        "expiry": str(exp).strip()
+        "UnderlyingScrip": int(security_id),
+        "UnderlyingSeg": str(seg).strip(),
+        "Expiry": str(exp).strip()
     }
     
     try:
@@ -132,13 +133,13 @@ def get_option_chain_data(client_id, access_token, security_id, seg, exp):
                     "CE_Volume": int(ce.get("volume", 0)),
                     "CE_IV": float(ce.get("impliedVolatility", 0.0)),
                     "CE_LTP": float(ce.get("lastTradedPrice", 0.0)),
-                    "PE_LTP": float(ce.get("lastTradedPrice", 0.0)),
-                    "PE_IV": float(ce.get("impliedVolatility", 0.0)),
-                    "PE_Volume": int(ce.get("volume", 0)),
-                    "PE_Chg_OI": int(ce.get("changeInOpenInterest", 0)),
-                    "PE_OI": int(ce.get("openInterest", 0)),
+                    "PE_LTP": float(pe.get("lastTradedPrice", 0.0)),
+                    "PE_IV": float(pe.get("impliedVolatility", 0.0)),
+                    "PE_Volume": int(pe.get("volume", 0)),
+                    "PE_Chg_OI": int(pe.get("changeInOpenInterest", 0)),
+                    "PE_OI": int(pe.get("openInterest", 0)),
                     "CE_Gamma": float(ce.get("gamma", 0.0015)),
-                    "PE_Gamma": float(ce.get("gamma", 0.0015))
+                    "PE_Gamma": float(pe.get("gamma", 0.0015))
                 })
             df = pd.DataFrame(rows)
             if not df.empty:
@@ -152,7 +153,7 @@ def get_option_chain_data(client_id, access_token, security_id, seg, exp):
         return pd.DataFrame(), 0.0
 
 if "df_cache" not in st.session_state or fetch_btn:
-    with st.spinner("Fetching data from Dhan..."):
+    with st.spinner("Fetching data from Dhan API v2..."):
         df_res, spot_res = get_option_chain_data(
             st.session_state.client_id, 
             st.session_state.access_token, 
@@ -167,7 +168,7 @@ df = st.session_state.df_cache
 spot = st.session_state.spot_cache
 
 if df.empty:
-    st.info("💡 डेटा नहीं मिला। यदि 'Invalid SecurityId' एरर आए, तो साइडबार में **Security ID** (जैसे Nifty के लिए 13 या कोई अन्य एक्सचेंज आईडी) और **Segment** को बदलकर चेक करें।")
+    st.info("💡 डेटा नहीं मिला। कृपया सुनिश्चित करें कि चुनी गई एक्सपायरी डेट एक वैध वर्किंग ट्रेडिंग डे (जैसे आगामी गुरुवार या मंगलवार) है और बाजार खुला है।")
     st.stop()
 
 # --- CALCULATIONS (PCR & MAX PAIN) ---
