@@ -2,12 +2,11 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-from datetime import datetime, timedelta
-import plotly.graph_objects as go
+from datetime import datetime
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Quant Terminal Pro | Stable Engine",
+    page_title="Quant Terminal Pro | ±10 Strike Focus Engine",
     page_icon="⚡",
     layout="wide"
 )
@@ -22,8 +21,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Quant Trading Terminal Pro [Stable & Clean Edition]")
-st.markdown("Institutional F&O Analytics — Zero Complex Auto-Fetch Errors")
+st.title("⚡ Nifty ±10 Strikes Precision Terminal [Dhan API v2]")
+st.markdown("Clean & Focused Engine — Displaying Exact Spot Center ±10 Strikes Data (OI, LTP, Volume)")
 
 # ==============================================================================
 # STEP 1: LOGIN & AUTHENTICATION GATEWAY
@@ -38,8 +37,6 @@ if not st.session_state.dhan_authenticated:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("### 🔐 Dhan API Login")
-        st.markdown("Enter your credentials to access the terminal.")
-        
         with st.form("login_form"):
             c_id = st.text_input("Dhan Client ID", value="")
             a_token = st.text_input("Dhan Access Token", type="password", value="")
@@ -57,7 +54,7 @@ if not st.session_state.dhan_authenticated:
     st.stop()
 
 # ==============================================================================
-# STEP 2: SIDEBAR & CLEAN CONTROLS
+# STEP 2: SIDEBAR CONTROLS
 # ==============================================================================
 st.sidebar.success("🟢 Connected to Dhan")
 if st.sidebar.button("Logout"):
@@ -65,38 +62,23 @@ if st.sidebar.button("Logout"):
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.header("📊 Navigation")
-menu = st.sidebar.selectbox("Select Module", ["Live Dashboard", "Option Chain Matrix", "PCR & Max Pain", "Gamma Walls"])
+st.sidebar.subheader("⚙️ Parameter Setup")
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("⚙️ Market Parameters")
+# Default Nifty Settings
+sec_id_input = st.sidebar.text_input("Security ID", value="13")
+segment_input = st.sidebar.selectbox("Exchange Segment", ["IDX_I", "NSE", "NSE_FNO"], index=0)
 
-index_map = {
-    "NIFTY": {"id": 13, "segment": "IDX_I"},
-    "BANKNIFTY": {"id": 25, "segment": "IDX_I"},
-    "FINNIFTY": {"id": 27, "segment": "IDX_I"}
-}
-
-selected_index = st.sidebar.selectbox("Select Index", list(index_map.keys()))
-
-default_id = index_map[selected_index]["id"]
-default_seg = index_map[selected_index]["segment"]
-
-sec_id_input = st.sidebar.text_input("Security ID", value=str(default_id))
-segment_input = st.sidebar.selectbox("Exchange Segment", ["IDX_I", "NSE", "NSE_FNO"], index=0 if default_seg=="IDX_I" else 1)
-
-# Clean date picker so you have total control over the exact expiry date format (YYYY-MM-DD)
+# Clean Date Picker for Expiry
 expiry_date = st.sidebar.date_input("Select Expiry Date", value=datetime.now())
 expiry_str = expiry_date.strftime("%Y-%m-%d")
 
-st.sidebar.markdown("---")
-fetch_btn = st.sidebar.button("🔄 Fetch Live Chain")
+fetch_btn = st.sidebar.button("🔄 Fetch Precision Data")
 
 # ==============================================================================
-# STEP 3: OPTION CHAIN DATA FETCHING ENGINE (DHAN API v2)
+# STEP 3: DATA FETCHING & ±10 STRIKE FILTER ENGINE
 # ==============================================================================
 @st.cache_data(ttl=15)
-def get_option_chain_data(client_id, access_token, security_id, seg, exp):
+def get_precision_option_chain(client_id, access_token, security_id, seg, exp):
     url = "https://api.dhan.co/v2/optionchain"
     headers = {
         "access-token": access_token.strip(),
@@ -131,15 +113,11 @@ def get_option_chain_data(client_id, access_token, security_id, seg, exp):
                     "CE_OI": int(ce.get("openInterest", 0)),
                     "CE_Chg_OI": int(ce.get("changeInOpenInterest", 0)),
                     "CE_Volume": int(ce.get("volume", 0)),
-                    "CE_IV": float(ce.get("impliedVolatility", 0.0)),
                     "CE_LTP": float(ce.get("lastTradedPrice", 0.0)),
-                    "PE_LTP": float(ce.get("lastTradedPrice", 0.0)),
-                    "PE_IV": float(ce.get("impliedVolatility", 0.0)),
-                    "PE_Volume": int(ce.get("volume", 0)),
-                    "PE_Chg_OI": int(ce.get("changeInOpenInterest", 0)),
-                    "PE_OI": int(ce.get("openInterest", 0)),
-                    "CE_Gamma": float(ce.get("gamma", 0.0015)),
-                    "PE_Gamma": float(ce.get("gamma", 0.0015))
+                    "PE_LTP": float(pe.get("lastTradedPrice", 0.0)),
+                    "PE_Volume": int(pe.get("volume", 0)),
+                    "PE_Chg_OI": int(pe.get("changeInOpenInterest", 0)),
+                    "PE_OI": int(pe.get("openInterest", 0))
                 })
             df = pd.DataFrame(rows)
             if not df.empty:
@@ -153,8 +131,8 @@ def get_option_chain_data(client_id, access_token, security_id, seg, exp):
         return pd.DataFrame(), 0.0
 
 if "df_cache" not in st.session_state or fetch_btn:
-    with st.spinner("Fetching data from Dhan API v2..."):
-        df_res, spot_res = get_option_chain_data(
+    with st.spinner("Fetching data from Dhan API..."):
+        df_res, spot_res = get_precision_option_chain(
             st.session_state.client_id, 
             st.session_state.access_token, 
             sec_id_input, 
@@ -164,72 +142,41 @@ if "df_cache" not in st.session_state or fetch_btn:
         st.session_state.df_cache = df_res
         st.session_state.spot_cache = spot_res
 
-df = st.session_state.df_cache
+full_df = st.session_state.df_cache
 spot = st.session_state.spot_cache
 
-if df.empty:
-    st.info("💡 डेटा नहीं मिला। कृपया सुनिश्चित करें कि चुनी गई एक्सपायरी डेट एक वैध ट्रेडिंग डे है और बाजार खुला है।")
+if full_df.empty:
+    st.info("💡 डेटा नहीं मिला। कृपया अपनी Security ID, Segment और Expiry Date की जाँच करें।")
     st.stop()
 
-# --- CALCULATIONS (PCR & MAX PAIN) ---
-tot_ce_oi = df['CE_OI'].sum()
-tot_pe_oi = df['PE_OI'].sum()
-pcr = round(tot_pe_oi / tot_ce_oi, 2) if tot_ce_oi > 0 else 0
+# --- FILTER SPOT PRICE ± 10 STRIKES ---
+# Find the index of the strike closest to the current spot price
+full_df['Diff'] = abs(full_df['Strike'] - spot)
+closest_idx = full_df['Diff'].idxmin()
 
-strikes = df['Strike'].values
-ce_vals = df['CE_OI'].values
-pe_vals = df['PE_OI'].values
-
-max_pain = strikes[0]
-min_loss = float('inf')
-payout_list = []
-
-for s in strikes:
-    c_loss = np.sum(np.maximum(0, s - strikes) * ce_vals)
-    p_loss = np.sum(np.maximum(0, strikes - s) * pe_vals)
-    total_loss = c_loss + p_loss
-    payout_list.append({"Strike": s, "Payout": total_loss})
-    if total_loss < min_loss:
-        min_loss = total_loss
-        max_pain = s
-
-payout_df = pd.DataFrame(payout_list)
+# Slice 10 strikes below and 10 strikes above the closest strike
+start_idx = max(0, closest_idx - 10)
+end_idx = min(len(full_df), closest_idx + 11)
+df = full_df.iloc[start_idx:end_idx].drop(columns=['Diff']).reset_index(drop=True)
 
 # ==============================================================================
-# STEP 4: VIEWS DISPLAY
+# STEP 4: CLEAN DISPLAY DASHBOARD
 # ==============================================================================
-if menu == "Live Dashboard":
-    st.subheader(f"📊 Live Overview — {selected_index} ({expiry_str})")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Spot Price", f"₹{spot:,.2f}")
-    c2.metric("Put-Call Ratio (PCR)", str(pcr))
-    c3.metric("Total Call OI", f"{tot_ce_oi:,}")
-    c4.metric("Max Pain Strike", f"₹{max_pain:,.0f}")
+st.subheader(f"🎯 Spot Reference: ₹{spot:,.2f} | Showing ±10 Strikes Around Spot")
 
-elif menu == "Option Chain Matrix":
-    st.subheader(f"⛓️ Option Chain Matrix — {selected_index}")
-    cols = ["CE_OI", "CE_Chg_OI", "CE_Volume", "CE_IV", "CE_LTP", "Strike", "PE_LTP", "PE_IV", "PE_Volume", "PE_Chg_OI", "PE_OI"]
-    st.dataframe(df[cols], use_container_width=True, height=600)
+col1, col2, col3 = st.columns(3)
+col1.metric("Current Spot Price", f"₹{spot:,.2f}")
+col2.metric("Active Center Strike", f"₹{full_df.loc[closest_idx, 'Strike']:,}")
+col3.metric("Total Strikes Displayed", f"{len(df)} Strikes")
 
-elif menu == "PCR & Max Pain":
-    st.subheader("📈 Max Pain & Payout Chart")
-    col1, col2 = st.columns(2)
-    col1.metric("Calculated Max Pain", f"₹{max_pain:,.0f}")
-    col2.metric("Market PCR", str(pcr))
-    
-    if not payout_df.empty:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=payout_df['Strike'].astype(str), y=payout_df['Payout'], mode='lines+markers', line=dict(color='#00cc96', width=3)))
-        fig.update_layout(template="plotly_dark", xaxis=dict(type='category', title="Strike Price"), yaxis_title="Total Settlement Loss")
-        st.plotly_chart(fig, use_container_width=True)
+st.markdown("---")
+st.markdown("### 📊 Precision Option Chain (Spot ± 10 Strikes)")
 
-elif menu == "Gamma Walls":
-    st.subheader("⚡ Gamma Exposure Walls")
-    df['CE_GEX'] = df['CE_OI'] * df['CE_Gamma'] * -100
-    df['PE_GEX'] = df['PE_OI'] * df['PE_Gamma'] * 100
-    
-    fig_gex = go.Figure()
-    fig_gex.add_trace(go.Bar(x=df['Strike'].astype(str), y=df['CE_GEX'], name='Call Wall', marker_color='#ff4b4b'))
-    fig_gex.add_trace(go.Bar(x=df['Strike'].astype(str), y=df['PE_GEX'], name='Put Wall', marker_color='#00cc96'))
-    fig_gex.update_layout(barmode='relative', template="plotly_dark", xaxis=dict(type='category', title="Strike"))
-    st.plotly_chart(fig_gex, use_container_width=True)
+# Clean column ordering for readability
+display_cols = [
+    "CE_OI", "CE_Chg_OI", "CE_Volume", "CE_LTP", 
+    "Strike", 
+    "PE_LTP", "PE_Volume", "PE_Chg_OI", "PE_OI"
+]
+
+st.dataframe(df[display_cols], use_container_width=True, height=500)
