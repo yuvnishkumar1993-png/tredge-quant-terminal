@@ -23,7 +23,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚡ Quant Trading Terminal Pro [Dhan Direct API Engine]")
-st.markdown("Connected via **Direct DhanHQ REST API** — Fully Customizable Security ID Gateway.")
+st.markdown("Connected via **Direct DhanHQ REST API** — Mandatory Expiry Payload Added.")
 
 # ==========================================
 # 1. LIVE DHAN API CREDENTIALS & SETTINGS
@@ -33,19 +33,22 @@ client_id_input = st.sidebar.text_input("Dhan Client ID", value="")
 access_token_input = st.sidebar.text_input("Dhan Access Token", type="password", value="")
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("⚙️ Advanced Security ID Settings")
-st.sidebar.info("💡 यदि डिफ़ॉल्ट ID पर एरर आए, तो यहाँ सही Security ID दर्ज करें (जैसे Nifty के लिए 13 या 1)।")
+st.sidebar.subheader("⚙️ Security ID & Expiry Settings")
 
-# Auto-suggest security ID based on symbol selection
 selected_symbol = st.selectbox("Underlying Symbol for Analysis", ["NIFTY", "BANKNIFTY", "FINNIFTY"], key="global_symbol")
 
 default_sec_id = "13" if selected_symbol == "NIFTY" else ("25" if selected_symbol == "BANKNIFTY" else "27")
 custom_sec_id = st.sidebar.text_input("Security ID", value=default_sec_id)
 segment_choice = st.sidebar.selectbox("Exchange Segment", ["IDX_I", "IDX", "NSE", "NSE_FNO"])
 
-# --- DIRECT DHAN REST API PARSER ---
+# Mandatory Expiry Date Input (Format: YYYY-MM-DD)
+default_expiry_str = datetime.now().strftime("%Y-%m-%d")
+expiry_input = st.sidebar.text_input("Expiry Date (YYYY-MM-DD)", value=default_expiry_str)
+st.sidebar.info("💡 ध्यान दें: धन API के लिए एक्सपायरी डेट (जैसे 2026-08-13) देना अनिवार्य है।")
+
+# --- DIRECT DHAN REST API PARSER WITH EXPIRY ---
 @st.cache_data(ttl=15)
-def fetch_real_dhan_option_chain(client_id, access_token, sec_id, segment):
+def fetch_real_dhan_option_chain(client_id, access_token, sec_id, segment, expiry):
     if not client_id or not access_token:
         return pd.DataFrame(), 0.0
 
@@ -58,9 +61,11 @@ def fetch_real_dhan_option_chain(client_id, access_token, sec_id, segment):
         "Accept": "application/json"
     }
     
+    # Payload including mandatory Expiry Date
     payload = {
         "underlyingSecurityId": str(sec_id).strip(),
-        "underlyingExchangeSegment": str(segment).strip()
+        "underlyingExchangeSegment": str(segment).strip(),
+        "expiry": str(expiry).strip()
     }
     
     try:
@@ -131,10 +136,10 @@ strike_range_mode = st.sidebar.radio(
     index=1
 )
 
-full_df, spot_price = fetch_real_dhan_option_chain(client_id_input, access_token_input, custom_sec_id, segment_choice)
+full_df, spot_price = fetch_real_dhan_option_chain(client_id_input, access_token_input, custom_sec_id, segment_choice, expiry_input)
 
 if full_df.empty:
-    st.info("💡 कृपया साइडबार में अपना **Dhan Client ID**, **Access Token** दर्ज करें और यदि आवश्यक हो तो सही **Security ID** (जैसे Nifty के लिए 13 या BankNifty के लिए 25) व सेगमेंट चुनें।")
+    st.info("💡 कृपया साइडबार में अपना **Dhan Client ID**, **Access Token** और सही **Expiry Date** दर्ज करें।")
     st.stop()
 
 # --- ACTIVE STRIKE FILTER ENGINE ---
@@ -191,7 +196,7 @@ if menu == "Live Dashboard":
     c4.metric("Max Pain Strike", f"₹{max_pain:,.0f}", "Writer Gravity Center")
 
 elif menu == "Option Chain Matrix":
-    st.subheader(f"⛓️ Professional Option Chain Matrix — {selected_symbol}")
+    st.subheader(f"⛓️ Professional Option Chain Matrix — {selected_symbol} ({expiry_input})")
     
     ce_tot = df['CE_OI'].sum()
     pe_tot = df['PE_OI'].sum()
