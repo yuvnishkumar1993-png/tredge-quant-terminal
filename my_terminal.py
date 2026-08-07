@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import plotly.express as px
+import plotly.graph_objects as go
 
 # Page Configuration
 st.set_page_config(
@@ -12,7 +14,7 @@ st.set_page_config(
 
 # App Title & Header
 st.title("📈 Quant Trading Terminal Pro")
-st.markdown("Advanced F&O Analytics, Net Gamma, PCR, Max Pain & Real-time Visual Charts")
+st.markdown("Advanced F&O Analytics, Net Gamma, PCR, Max Pain & Professional Charts")
 
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.header("Navigation")
@@ -21,39 +23,47 @@ menu = st.sidebar.selectbox(
     ["Live Dashboard", "Option Chain", "PCR & Max Pain", "Gamma & GEX Analysis", "Gamma Flip Alerts", "Broker API Settings"]
 )
 
-# --- MOCK DATA GENERATOR WITH IV & GREEKS ---
-def get_mock_option_chain(symbol):
-    strikes = [23200, 23300, 23400, 23500, 23600, 23700, 23800]
+# --- EXPANDED MOCK OPTION CHAIN (सभी स्ट्राइक प्राइस के साथ) ---
+def get_comprehensive_option_chain(symbol):
+    # बेस प्राइस तय करें
+    base_spot = 23500 if symbol == "NIFTY" else (50200 if symbol == "BANKNIFTY" else 2950)
+    step = 100 if symbol != "RELIANCE" else 20
+    
+    # दोनों तरफ (ITM और OTM) के 15 स्ट्राइक प्राइस जनरेट करें (कुल 30+ स्ट्राइक)
+    strikes = [base_spot + (i * step) for i in range(-15, 16)]
+    
     data = []
     for s in strikes:
         data.append({
-            "strike": s,
-            "ce_oi": np.random.randint(50000, 300000),
-            "ce_vol": np.random.randint(10000, 100000),
-            "ce_iv": round(np.random.uniform(12.0, 25.0), 2),  # Call IV
-            "ce_ltp": round(np.random.uniform(10, 250), 2),
-            "pe_iv": round(np.random.uniform(12.0, 25.0), 2),  # Put IV
-            "pe_ltp": round(np.random.uniform(10, 250), 2),
-            "pe_vol": np.random.randint(10000, 100000),
-            "pe_oi": np.random.randint(50000, 300000),
+            "CE_OI": np.random.randint(100000, 800000),
+            "CE_Chg_OI": np.random.randint(-20000, 30000),
+            "CE_Volume": np.random.randint(50000, 300000),
+            "CE_IV": round(np.random.uniform(12.0, 30.0), 2),
+            "CE_LTP": round(max(1.0, (base_spot - s) * 0.1 + np.random.uniform(20, 150)), 2),
+            "Strike": s,  # बीच में स्ट्राइक प्राइस
+            "PE_LTP": round(max(1.0, (s - base_spot) * 0.1 + np.random.uniform(20, 150)), 2),
+            "PE_IV": round(np.random.uniform(12.0, 30.0), 2),
+            "PE_Volume": np.random.randint(50000, 300000),
+            "PE_Chg_OI": np.random.randint(-20000, 30000),
+            "PE_OI": np.random.randint(100000, 800000),
         })
     return pd.DataFrame(data)
 
 # --- CALCULATIONS ---
 def calculate_metrics(df):
-    total_ce_oi = df['ce_oi'].sum()
-    total_pe_oi = df['pe_oi'].sum()
-    total_ce_vol = df['ce_vol'].sum()
-    total_pe_vol = df['pe_vol'].sum()
+    total_ce_oi = df['CE_OI'].sum()
+    total_pe_oi = df['PE_OI'].sum()
+    total_ce_vol = df['CE_Volume'].sum()
+    total_pe_vol = df['PE_Volume'].sum()
     
     pcr_oi = round(total_pe_oi / total_ce_oi, 2) if total_ce_oi > 0 else 0
     pcr_vol = round(total_pe_vol / total_ce_vol, 2) if total_ce_vol > 0 else 0
     
-    net_gamma = round(np.random.uniform(-1500, 1500), 2)
-    abs_gamma = round(abs(net_gamma) * 12.5, 2)
+    net_gamma = round(np.random.uniform(-2500, 2500), 2)
+    abs_gamma = round(abs(net_gamma) * 15.2, 2)
     gamma_state = "POSITIVE" if net_gamma >= 0 else "NEGATIVE"
     
-    max_pain = df.loc[df['ce_oi'].idxmax(), 'strike'] if not df.empty else 23500
+    max_pain = df.loc[df['CE_OI'].idxmax(), 'Strike'] if not df.empty else 23500
     
     return pcr_oi, pcr_vol, net_gamma, abs_gamma, gamma_state, max_pain
 
@@ -67,28 +77,39 @@ if menu == "Live Dashboard":
     col3.metric("Net Gamma State", "NEGATIVE", "-450.2 (High Volatility)", delta_color="inverse")
     col4.metric("Max Pain Strike", "₹23,500", "Writer Profit Zone")
 
-# --- 2. OPTION CHAIN ---
+# --- 2. OPTION CHAIN (अलग-अलग कॉलम्स और सभी स्ट्राइक के साथ) ---
 elif menu == "Option Chain":
-    st.subheader("⛓️ Multi-Expiry Option Chain")
+    st.subheader("⛓️ Comprehensive Option Chain (All Strikes)")
     
     col1, col2 = st.columns(2)
     with col1:
-        symbol = st.selectbox("Select Symbol", ["NIFTY", "BANKNIFTY", "RELIANCE"])
+        symbol = st.selectbox("Select Symbol / Contract", ["NIFTY", "BANKNIFTY", "RELIANCE"])
     with col2:
-        expiry = st.selectbox("Select Expiry Date", ["2026-06-11", "2026-06-18", "2026-06-25"])
+        expiry = st.selectbox("Select Expiry Date", ["2026-06-11", "2026-06-18", "2026-06-25", "2026-07-30"])
     
-    df = get_mock_option_chain(symbol)
-    st.dataframe(df, use_container_width=True)
+    df = get_comprehensive_option_chain(symbol)
+    
+    st.markdown(f"**Showing full options chain data for {symbol} (Expiry: {expiry})** — Scroll down to view all strikes.")
+    
+    # टेबल को अच्छे से दिखाने के लिए कॉलम आर्डर सेट करना
+    columns_order = [
+        "CE_OI", "CE_Chg_OI", "CE_Volume", "CE_IV", "CE_LTP", 
+        "Strike", 
+        "PE_LTP", "PE_IV", "PE_Volume", "PE_Chg_OI", "PE_OI"
+    ]
+    df_styled = df[columns_order]
+    
+    st.dataframe(df_styled, use_container_width=True, height=500)
 
-# --- 3. PCR & MAX PAIN (WITH CHARTS & IV) ---
+# --- 3. PCR & MAX PAIN (STABLE PLOTLY CHARTS) ---
 elif menu == "PCR & Max Pain":
-    st.subheader("📉 PCR, Max Pain & IV Chart Analysis")
+    st.subheader("📉 PCR, Max Pain & Professional IV Charts")
     
     col1, col2 = st.columns(2)
     symbol = col1.selectbox("Symbol", ["NIFTY", "BANKNIFTY", "RELIANCE"])
     expiry = col2.selectbox("Expiry", ["2026-06-11", "2026-06-18", "2026-06-25"])
     
-    df = get_mock_option_chain(symbol)
+    df = get_comprehensive_option_chain(symbol)
     pcr_oi, pcr_vol, net_g, abs_g, state, max_pain = calculate_metrics(df)
     
     c1, c2, c3 = st.columns(3)
@@ -97,25 +118,31 @@ elif menu == "PCR & Max Pain":
     c3.metric("Max Pain Strike", f"₹{max_pain}")
     
     st.markdown("---")
-    st.subheader("📊 Strike-wise Open Interest & Max Pain Visualization")
+    st.subheader("📊 Strike-wise Call OI vs Put OI (Max Pain Analysis)")
     
-    # Chart for OI (Calls vs Puts) to visually show Max Pain
-    chart_data = df.set_index('strike')[['ce_oi', 'pe_oi']]
-    st.bar_chart(chart_data)
-    st.caption("Above chart shows Call OI vs Put OI across strikes. The point of highest writer concentration indicates Max Pain.")
+    # Plotly Bar Chart (स्टेबल और प्रोफेशनल)
+    fig_oi = go.Figure()
+    fig_oi.add_trace(go.Bar(x=df['Strike'], y=df['CE_OI'], name='Call OI', marker_color='red'))
+    fig_oi.add_trace(go.Bar(x=df['Strike'], y=df['PE_OI'], name='Put OI', marker_color='green'))
+    fig_oi.update_layout(barmode='group', xaxis_title="Strike Price", yaxis_title="Open Interest", template="plotly_white")
+    st.plotly_chart(fig_oi, use_container_width=True)
 
     st.markdown("---")
     st.subheader("📉 Implied Volatility (IV) Skew Chart")
-    iv_chart_data = df.set_index('strike')[['ce_iv', 'pe_iv']]
-    st.line_chart(iv_chart_data)
-    st.caption("Call IV vs Put IV Skew across strikes.")
+    
+    # Plotly Line Chart
+    fig_iv = go.Figure()
+    fig_iv.add_trace(go.Scatter(x=df['Strike'], y=df['CE_IV'], mode='lines+markers', name='Call IV', line=dict(color='red', width=2)))
+    fig_iv.add_trace(go.Scatter(x=df['Strike'], y=df['PE_IV'], mode='lines+markers', name='Put IV', line=dict(color='green', width=2)))
+    fig_iv.update_layout(xaxis_title="Strike Price", yaxis_title="IV (%)", template="plotly_white")
+    st.plotly_chart(fig_iv, use_container_width=True)
 
 # --- 4. GAMMA & GEX ANALYSIS ---
 elif menu == "Gamma & GEX Analysis":
-    st.subheader("⚡ Net Gamma, Absolute Gamma & Historical Charts")
+    st.subheader("⚡ Net Gamma, Absolute Gamma & Trend Charts")
     
     symbol = st.selectbox("Select Symbol for Gamma", ["NIFTY", "BANKNIFTY", "RELIANCE"])
-    df = get_mock_option_chain(symbol)
+    df = get_comprehensive_option_chain(symbol)
     pcr_oi, pcr_vol, net_g, abs_g, state, max_pain = calculate_metrics(df)
     
     col1, col2, col3 = st.columns(3)
@@ -124,15 +151,18 @@ elif menu == "Gamma & GEX Analysis":
     col3.metric("Gamma State", state, delta_color="inverse" if state=="NEGATIVE" else "normal")
     
     st.markdown("---")
-    st.subheader("📈 5-Minute Historical Gamma & PCR Trend Chart")
+    st.subheader("📈 Historical Trend (Net Gamma & PCR)")
     
-    # Simulated 5-min historical chart data
-    time_series_data = pd.DataFrame({
-        "Net_Gamma": np.random.uniform(-1000, 1000, 10),
-        "PCR_OI": np.random.uniform(0.8, 1.4, 10)
-    }, index=[f"10:{i*5:02d}" for i in range(10)])
+    # Plotly Multi-line Trend Chart
+    time_indices = [f"10:{i*5:02d}" for i in range(12)]
+    trend_df = pd.DataFrame({
+        "Time": time_indices,
+        "Net_Gamma": np.random.uniform(-1500, 1500, 12),
+        "PCR_OI": np.random.uniform(0.85, 1.35, 12)
+    })
     
-    st.line_chart(time_series_data)
+    fig_trend = px.line(trend_df, x="Time", y=["Net_Gamma", "PCR_OI"], markers=True, title="Intraday Gamma & PCR Flow", template="plotly_white")
+    st.plotly_chart(fig_trend, use_container_width=True)
 
 # --- 5. GAMMA FLIP ALERTS ---
 elif menu == "Gamma Flip Alerts":
@@ -140,7 +170,7 @@ elif menu == "Gamma Flip Alerts":
     st.warning("📡 Live Scanner is active. Alerts trigger automatically on Negative to Positive Gamma shifts.")
     
     if st.button("Run Manual Market Scan"):
-        st.success("Scan completed successfully! No new negative-to-positive flips right now.")
+        st.success("Scan completed successfully! All futures contracts checked.")
         
     alert_data = pd.DataFrame({
         "Timestamp": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
