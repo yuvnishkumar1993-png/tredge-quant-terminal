@@ -21,7 +21,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- APP HEADER ---
-st.title("📈 Quant Trading Terminal Pro [Robust Edition]")
+st.title("📈 Quant Terminal Pro [Robust Edition]")
 st.markdown("Advanced F&O Analytics with Smart CSV Mapping & Accurate Max Pain Engine")
 
 # --- SIDEBAR NAVIGATION & CONTROLS ---
@@ -47,7 +47,7 @@ strike_range_mode = st.sidebar.radio(
     index=1
 )
 
-# --- SMART CSV UPLOAD SYSTEM ---
+# --- ADVANCED SMART CSV UPLOAD & MAPPING ENGINE ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("📁 Data Verification & Upload")
 uploaded_file = st.sidebar.file_uploader("Upload Option Chain CSV", type=["csv"])
@@ -57,36 +57,52 @@ def load_option_chain_data(file):
     if file is not None:
         try:
             df_csv = pd.read_csv(file)
-            # Clean column whitespaces
             df_csv.columns = df_csv.columns.str.strip()
             
-            # Smart auto-mapping for flexible CSV column names
+            # Debug info to show detected columns in sidebar
+            st.sidebar.write("🔍 **Detected CSV Columns:**", list(df_csv.columns))
+            
             col_map = {}
             for col in df_csv.columns:
-                lower_col = col.lower()
-                if 'strike' in lower_col: col_map[col] = 'Strike'
-                elif 'ce' in lower_col and ('oi' in lower_col or 'open' in lower_col): col_map[col] = 'CE_OI'
-                elif 'pe' in lower_col and ('oi' in lower_col or 'open' in lower_col): col_map[col] = 'PE_OI'
-                elif 'ce' in lower_col and 'iv' in lower_col: col_map[col] = 'CE_IV'
-                elif 'pe' in lower_col and 'iv' in lower_col: col_map[col] = 'PE_IV'
-                elif 'ce' in lower_col and 'gamma' in lower_col: col_map[col] = 'CE_Gamma'
-                elif 'pe' in lower_col and 'gamma' in lower_col: col_map[col] = 'PE_Gamma'
+                lc = col.lower()
+                # Flexible matching for Strike
+                if any(k in lc for k in ['strike', 'stk', 'price']):
+                    col_map[col] = 'Strike'
+                # Flexible matching for Call Open Interest
+                elif any(k in lc for k in ['call', 'ce']) and any(k in lc for k in ['oi', 'open', 'int']):
+                    col_map[col] = 'CE_OI'
+                # Flexible matching for Put Open Interest
+                elif any(k in lc for k in ['put', 'pe']) and any(k in lc for k in ['oi', 'open', 'int']):
+                    col_map[col] = 'PE_OI'
+                # Flexible matching for IV
+                elif any(k in lc for k in ['call', 'ce']) and 'iv' in lc:
+                    col_map[col] = 'CE_IV'
+                elif any(k in lc for k in ['put', 'pe']) and 'iv' in lc:
+                    col_map[col] = 'PE_IV'
+                # Flexible matching for Gamma
+                elif any(k in lc for k in ['call', 'ce']) and 'gamma' in lc:
+                    col_map[col] = 'CE_Gamma'
+                elif any(k in lc for k in ['put', 'pe']) and 'gamma' in lc:
+                    col_map[col] = 'PE_Gamma'
             
             df_csv = df_csv.rename(columns=col_map)
             
             if "Strike" in df_csv.columns and "CE_OI" in df_csv.columns and "PE_OI" in df_csv.columns:
-                # Set defaults for missing optional columns
+                # Clean commas or string formatting if numbers have commas (e.g. "1,50,000")
+                for col in ["Strike", "CE_OI", "PE_OI"]:
+                    if df_csv[col].dtype == object:
+                        df_csv[col] = df_csv[col].astype(str).str.replace(',', '').astype(float)
+                
+                # Fill missing optional columns with defaults
                 if "CE_IV" not in df_csv.columns: df_csv["CE_IV"] = 15.0
                 if "PE_IV" not in df_csv.columns: df_csv["PE_IV"] = 15.0
                 if "CE_Gamma" not in df_csv.columns: df_csv["CE_Gamma"] = 0.002
                 if "PE_Gamma" not in df_csv.columns: df_csv["PE_Gamma"] = 0.002
-                if "CE_Chg_OI" not in df_csv.columns: df_csv["CE_Chg_OI"] = 0
-                if "PE_Chg_OI" not in df_csv.columns: df_csv["PE_Chg_OI"] = 0
                 
-                spot_ref = df_csv['Strike'].iloc[len(df_csv)//2] # Approximate spot at middle strike
+                spot_ref = df_csv['Strike'].iloc[len(df_csv)//2]
                 return df_csv, spot_ref
             else:
-                st.sidebar.error("❌ CSV must contain Strike, CE_OI, and PE_OI columns!")
+                st.sidebar.error("❌ Could not auto-map columns! Ensure your CSV has columns representing Strike, Call OI, and Put OI.")
         except Exception as e:
             st.sidebar.error(f"Error reading CSV: {e}")
     
@@ -96,11 +112,9 @@ def load_option_chain_data(file):
     df_default = pd.DataFrame({
         "Strike": default_strikes,
         "CE_OI": np.random.randint(10000, 200000, len(default_strikes)),
-        "CE_Chg_OI": np.random.randint(-5000, 10000, len(default_strikes)),
         "CE_IV": np.random.uniform(10.0, 25.0, len(default_strikes)),
         "CE_Gamma": np.random.uniform(0.0005, 0.0040, len(default_strikes)),
         "PE_OI": np.random.randint(10000, 200000, len(default_strikes)),
-        "PE_Chg_OI": np.random.randint(-5000, 10000, len(default_strikes)),
         "PE_IV": np.random.uniform(10.0, 25.0, len(default_strikes)),
         "PE_Gamma": np.random.uniform(0.0005, 0.0040, len(default_strikes))
     })
@@ -108,7 +122,7 @@ def load_option_chain_data(file):
 
 full_df, spot_price = load_option_chain_data(uploaded_file)
 
-if uploaded_file is not None:
+if uploaded_file is not None and "Strike" in full_df.columns:
     st.sidebar.success("✅ CSV Successfully Mapped & Loaded!")
 
 # --- FILTER DATA BASED ON SIDEBAR STRIKE RANGE ---
@@ -138,7 +152,6 @@ def calculate_max_pain(dataframe):
     max_pain_strike = strikes[0]
     
     for s in strikes:
-        # Total payout if market expires at strike 's'
         call_payout = np.sum(np.maximum(0, s - strikes) * ce_oi)
         put_payout = np.sum(np.maximum(0, strikes - s) * pe_oi)
         total_payout = call_payout + put_payout
