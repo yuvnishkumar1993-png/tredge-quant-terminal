@@ -2,90 +2,41 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-import os
+from utils import init_global_state, get_asset_details_from_master
 
-# --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Institutional Option Chain Desk", page_icon="⚡", layout="wide")
-
 st.markdown("## ⚡ Live DhanHQ Institutional Option Chain Desk")
 st.markdown("---")
 
-# --- 1. DYNAMIC CSV MASTER LOADER ---
-@st.cache_data(ttl=60)
-def load_dhan_master():
-    possible_files = ["api-scrip-master.csv", "MW-All-Indices-08-Aug-2026.csv", "MW-FO-stock_fut-08-Aug-2026.csv"]
-    for file in os.listdir("."):
-        if file.endswith(".csv") and file not in possible_files:
-            possible_files.insert(0, file)
-    for path in possible_files:
-        if os.path.exists(path):
-            try:
-                df = pd.read_csv(path, low_memory=False)
-                df.columns = [str(col).strip().upper() for col in df.columns]
-                return df, path
-            except:
-                continue
-    return pd.DataFrame(), "None"
+init_global_state()
 
-df_master, active_file = load_dhan_master()
-
-# Check authentication state from session
 is_auth = st.session_state.get("dhan_authenticated", False)
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-if not is_auth:
-    st.warning("⚠️ **API Not Connected:** कृपया पहले मुख्य होम पेज (`app.py`) पर जाकर अपना Dhan Client ID और Access Token दर्ज करें। अभी मास्टर/सिम्युलेटेड मोड सक्रिय है।")
-
-# --- 2. CONTROLS ---
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     selected_symbol = st.selectbox(
         "Underlying Asset", 
-        ["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "TCS", "INFY", "SBIN"]
+        ["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "TCS", "INFY", "SBIN"],
+        index=["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "TCS", "INFY", "SBIN"].index(st.session_state.global_symbol) if st.session_state.global_symbol in ["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "TCS", "INFY", "SBIN"] else 0,
+        key="global_symbol_oc"
     )
+    st.session_state.global_symbol = selected_symbol
 
 with col2:
-    # --- DIRECT INDEX MAPPING (BULLETPROOF FIX FOR INDICES) ---
-    index_mapping = {
-        "NIFTY": {"id": 13, "seg": "IDX_I"},
-        "BANKNIFTY": {"id": 25, "seg": "IDX_I"},
-        "FINNIFTY": {"id": 27, "seg": "IDX_I"}
-    }
-    
-    if selected_symbol in index_mapping:
-        resolved_sec_id = index_mapping[selected_symbol]["id"]
-        resolved_seg = index_mapping[selected_symbol]["seg"]
-    else:
-        resolved_sec_id = 13
-        resolved_seg = "NSE_FNO"
-        if not df_master.empty:
-            sym_col = next((c for c in df_master.columns if 'SYMBOL' in c or 'TRADING' in c), None)
-            seg_col = next((c for c in df_master.columns if 'SEGMENT' in c or 'EXCH' in c), None)
-            id_col = next((c for c in df_master.columns if 'ID' in c), None)
-            
-            if sym_col and id_col and seg_col:
-                matched = df_master[df_master[sym_col].astype(str).str.contains(selected_symbol, na=False)]
-                if not matched.empty:
-                    try:
-                        resolved_sec_id = int(matched.iloc[0][id_col])
-                        resolved_seg = str(matched.iloc[0][seg_col])
-                    except:
-                        pass
+    resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
 
-    # Fetching Expiry List from Dhan API if authenticated
     expiries = ["2026-08-11", "2026-08-18", "2026-08-25"]
     if is_auth and access_token:
         try:
             exp_url = "https://api.dhan.co/v2/optionchain/expirylist"
             headers = {"access-token": access_token.strip(), "client-id": client_id.strip(), "Content-Type": "application/json"}
-            payload = {"UnderlyingScrip": resolved_sec_id, "UnderlyingSeg": resolved_seg}
-            res = requests.post(exp_url, json=payload, headers=headers, timeout=5)
+            res = requests.post(exp_url, json={"UnderlyingScrip": resolved_sec_id, "UnderlyingSeg": resolved_seg}, headers=headers, timeout=5)
             if res.status_code == 200:
                 data = res.json().get("data", [])
-                if data:
-                    expiries = data
+                if data: expiries = data
         except:
             pass
 
@@ -100,33 +51,23 @@ with col4:
 
 st.markdown("---")
 
-# --- 3. FETCHING OPTION CHAIN DATA (WITH SAFE FALLBACK) ---
 @st.cache_data(ttl=15)
 def fetch_option_chain_data(c_id, token, sec_id, seg, exp):
-    if not c_id or not token:
-        return pd.DataFrame(), 0.0
-    
+    if not c_id or not token: return pd.DataFrame(), 0.0
     url = "https://api.dhan.co/v2/optionchain"
     headers = {"access-token": token.strip(), "client-id": c_id.strip(), "Content-Type": "application/json"}
-    payload = {"UnderlyingScrip": int(sec_id), "UnderlyingSeg": str(seg).strip(), "Expiry": str(exp).strip()}
-    
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=8)
+        response = requests.post(url, json={"UnderlyingScrip": int(sec_id), "UnderlyingSeg": str(seg).strip(), "Expiry": str(exp).strip()}, headers=headers, timeout=8)
         if response.status_code == 200:
             res = response.json()
             block = res.get("data", {})
             spot_val = float(block.get("last_price", 0.0))
             oc_map = block.get("oc", {})
-            
-            if not oc_map:
-                return pd.DataFrame(), spot_val
-                
             records = []
             for s_str, obj in oc_map.items():
                 s_val = float(s_str)
                 ce = obj.get("ce", {})
                 pe = obj.get("pe", {})
-                
                 records.append({
                     "CE OI (L)": round(int(ce.get("oi", 0)) / 100000.0, 2),
                     "CE Chg (L)": round(int(ce.get("oi", 0) - ce.get("previous_oi", 0)) / 100000.0, 2),
@@ -143,44 +84,21 @@ def fetch_option_chain_data(c_id, token, sec_id, seg, exp):
                     "PE OI (L)": round(int(pe.get("oi", 0)) / 100000.0, 2)
                 })
             df_out = pd.DataFrame(records)
-            if not df_out.empty:
-                df_out = df_out.sort_values(by="STRIKE").reset_index(drop=True)
+            if not df_out.empty: df_out = df_out.sort_values(by="STRIKE").reset_index(drop=True)
             return df_out, spot_val
-    except:
-        pass
+    except: pass
     return pd.DataFrame(), 0.0
 
-# Try fetching live data using resolved_seg
 chain_df, api_spot = fetch_option_chain_data(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry)
-if api_spot > 0:
-    live_spot = api_spot
+if api_spot > 0: live_spot = api_spot
 
-# Fallback simulation if API returns empty
 if chain_df.empty:
     step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
     atm = round(live_spot / step) * step
     strikes_arr = [atm + (i * step) for i in range(-15, 16)]
-    
-    mock_recs = []
-    np.random.seed(42)
-    for s in strikes_arr:
-        mock_recs.append({
-            "CE OI (L)": round(np.random.uniform(20, 200), 2),
-            "CE Chg (L)": round(np.random.uniform(-10, 15), 2),
-            "CE Vol (L)": round(np.random.uniform(50, 300), 2),
-            "CE IV": 14.5, "CE Delta": 0.5,
-            "CE LTP": round(max(1.0, live_spot - s + 40), 2),
-            "STRIKE": int(s),
-            "PE LTP": round(max(1.0, s - live_spot + 40), 2),
-            "PE Delta": -0.5, "PE IV": 15.0,
-            "PE Vol (L)": round(np.random.uniform(50, 300), 2),
-            "PE Chg (L)": round(np.random.uniform(-10, 15), 2),
-            "PE OI (L)": round(np.random.uniform(20, 200), 2)
-        })
+    mock_recs = [{"CE OI (L)": 50.0, "CE Chg (L)": 2.0, "CE Vol (L)": 100.0, "CE IV": 14.5, "CE Delta": 0.5, "CE LTP": 50.0, "STRIKE": int(s), "PE LTP": 50.0, "PE Delta": -0.5, "PE IV": 15.0, "PE Vol (L)": 100.0, "PE Chg (L)": 2.0, "PE OI (L)": 50.0} for s in strikes_arr]
     chain_df = pd.DataFrame(mock_recs)
-    st.info("ℹ️ **Safe-Mode Active:** लाइव मार्केट फीड उपलब्ध नहीं है, अतः मानक सिमुलेटेड संरचना प्रदर्शित की जा रही है।")
 
-# --- 4. STRIKE FILTER & DISPLAY ---
 chain_df['Dist'] = abs(chain_df['STRIKE'] - live_spot)
 center = chain_df['Dist'].idxmin()
 
@@ -191,13 +109,5 @@ elif "±20" in strike_range:
 else:
     disp_df = chain_df.drop(columns=['Dist'])
 
-st.markdown(f"### 📊 Option Chain Matrix | Asset: `{selected_symbol}` (ID: `{resolved_sec_id}`) | Spot: `₹{live_spot:,.2f}`")
-
-def highlight_atm(row):
-    step_val = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
-    atm_val = round(live_spot / step_val) * step_val
-    if row['STRIKE'] == atm_val:
-        return ['background-color: #1f6feb; color: white; font-weight: bold;'] * len(row)
-    return [''] * len(row)
-
-st.dataframe(disp_df.style.apply(highlight_atm, axis=1), use_container_width=True, height=550, hide_index=True)
+st.markdown(f"### 📊 Option Chain Matrix | Asset: `{selected_symbol}` (ID: `{resolved_sec_id}`, Lot: `{lot_size}`) | Spot: `₹{live_spot:,.2f}`")
+st.dataframe(disp_df, use_container_width=True, height=550, hide_index=True)
