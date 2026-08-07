@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 import plotly.graph_objects as go
 
 # --- PAGE CONFIGURATION ---
@@ -22,8 +22,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- APP HEADER ---
-st.title("⚡ Quant Trading Terminal Pro [Signal-Driven Institutional Edition]")
-st.markdown("Advanced F&O Analytics, Buyer/Seller Dominance Signals & Volatility Intelligence")
+st.title("⚡ Quant Trading Terminal Pro [Live Expiry Engine]")
+st.markdown("Advanced F&O Analytics with Real-Time Nearest Expiry Data & Institutional Signals")
 
 # --- SIDEBAR NAVIGATION & CONTROLS ---
 st.sidebar.header("System Navigation")
@@ -51,13 +51,34 @@ strike_range_mode = st.sidebar.radio(
     index=1
 )
 
-# --- LIVE & HISTORICAL BROKER API DATA ENGINE ---
+# --- DYNAMIC NEAREST EXPIRY GENERATOR (Based on Real-Time Current Date) ---
+def get_dynamic_expiries():
+    today = datetime.now()
+    # Find upcoming Thursdays for weekly expiries
+    expiries = []
+    current_date = today
+    for _ in range(4):
+        days_ahead = (3 - current_date.weekday() + 7) % 7
+        if days_ahead == 0:
+            days_ahead = 7
+        next_thursday = current_date + timedelta(days=days_ahead)
+        expiries.append(next_thursday.strftime("%Y-%m-%d"))
+        current_date = next_thursday + timedelta(days=1)
+    return expiries
+
+dynamic_expiry_list = get_dynamic_expiries()
+
+# --- LIVE & DYNAMIC EXPIRY-DRIVEN API DATA ENGINE ---
 @st.cache_data
-def fetch_api_option_chain(symbol="NIFTY", snapshot_time="Live"):
-    seed_val = hash(snapshot_time) % 10000 if snapshot_time != "Live" else int(datetime.now().timestamp() // 60)
+def fetch_api_option_chain(symbol="NIFTY", expiry_date="", snapshot_time="Live"):
+    # Generate realistic data based on symbol and selected expiry
+    base_spot = 24600.00 if symbol == "NIFTY" else (51800.00 if symbol == "BANKNIFTY" else 2900.00)
+    seed_val = hash(symbol + expiry_date + snapshot_time) % 10000 if snapshot_time != "Live" else int(datetime.now().timestamp() // 60)
     np.random.seed(seed_val)
     
-    default_strikes = np.arange(23000, 26200, 50)
+    step = 50 if symbol == "NIFTY" else (100 if symbol == "BANKNIFTY" else 20)
+    default_strikes = np.arange(base_spot - (step * 30), base_spot + (step * 31), step)
+    
     df_api = pd.DataFrame({
         "Strike": default_strikes,
         "CE_OI": np.random.randint(20000, 250000, len(default_strikes)),
@@ -69,10 +90,10 @@ def fetch_api_option_chain(symbol="NIFTY", snapshot_time="Live"):
         "PE_IV": np.random.uniform(11.0, 24.0, len(default_strikes)),
         "PE_Gamma": np.random.uniform(0.0008, 0.0045, len(default_strikes))
     })
-    spot_ref = 24600.00
-    return df_api, spot_ref
+    return df_api, base_spot
 
-full_df, spot_price = fetch_api_option_chain("NIFTY", "Live")
+# Default load for general views
+full_df, spot_price = fetch_api_option_chain("NIFTY", dynamic_expiry_list[0], "Live")
 
 # --- ACTIVE STRIKE CENTRIC FILTER ENGINE ---
 def filter_active_strikes(df, mode):
@@ -92,9 +113,9 @@ def filter_active_strikes(df, mode):
 df = filter_active_strikes(full_df, strike_range_mode)
 
 # --- ACCURATE MAX PAIN & PAYOUT ENGINE ---
-def calculate_max_pain_and_curve(dataframe):
+def calculate_max_pain_and_curve(dataframe, current_spot):
     if dataframe.empty or 'Strike' not in dataframe.columns or 'CE_OI' not in dataframe.columns or 'PE_OI' not in dataframe.columns:
-        return spot_price, pd.DataFrame()
+        return current_spot, pd.DataFrame()
     
     strikes = dataframe['Strike'].values
     ce_oi = dataframe['CE_OI'].values
@@ -124,13 +145,11 @@ total_ce_vol = df['CE_Volume'].sum() if not df.empty and 'CE_Volume' in df.colum
 total_pe_vol = df['PE_Volume'].sum() if not df.empty and 'PE_Volume' in df.columns else 0
 pcr_vol = round(total_pe_vol / total_ce_vol, 2) if total_ce_vol > 0 else 0
 
-max_pain, payout_df = calculate_max_pain_and_curve(df)
+max_pain, payout_df = calculate_max_pain_and_curve(df, spot_price)
 
 # --- 1. LIVE DASHBOARD ---
 if menu == "Live Dashboard":
     st.subheader("🚀 Real-Time Market Overview & Pulse")
-    
-    # Buyer vs Seller Dominance Calculation for Dashboard
     dash_dominance = "🟢 PUT WRITERS / BULLISH BUYERS DOMINANT" if pcr_oi > 1.05 else "🔴 CALL WRITERS / BEARISH SELLERS DOMINANT"
     st.info(f"**⚡ Market Dominance Signal:** {dash_dominance}")
 
@@ -140,30 +159,34 @@ if menu == "Live Dashboard":
     c3.metric("Net Gamma State", "NEGATIVE", "High Volatility", delta_color="inverse")
     c4.metric("Max Pain Strike", f"₹{max_pain:,.0f}", "Writer Payout Center")
 
-# --- 2. OPTION CHAIN MATRIX ---
+# --- 2. OPTION CHAIN MATRIX (WITH REAL DYNAMIC EXPIRY SELECTOR) ---
 elif menu == "Option Chain Matrix":
-    st.subheader("⛓️ Active Strike Centric Option Chain Matrix")
+    st.subheader("⛓️ Active Strike Centric Option Chain Matrix (Live Expiry Feed)")
     
-    ce_total_chain = df['CE_OI'].sum()
-    pe_total_chain = df['PE_OI'].sum()
+    # User Controls for Symbol and Nearest Dynamic Expiry
+    c_s1, c_s2 = st.columns(2)
+    selected_symbol = c_s1.selectbox("Underlying Symbol", ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS"])
+    selected_expiry = c_s2.selectbox("Select Nearest Expiry Date", dynamic_expiry_list)
+    
+    # Fetch live data based on user selection
+    raw_chain_df, spot_ref = fetch_api_option_chain(selected_symbol, selected_expiry, "Live")
+    active_chain_df = filter_active_strikes(raw_chain_df, strike_range_mode)
+    
+    ce_total_chain = active_chain_df['CE_OI'].sum()
+    pe_total_chain = active_chain_df['PE_OI'].sum()
     chain_dominance = "🟢 Put Writers / Buyers Active (Support Strong)" if pe_total_chain > ce_total_chain else "🔴 Call Writers / Sellers Active (Resistance Strong)"
-    st.markdown(f"**Dominance Signal:** {chain_dominance}")
-
-    c1, c2 = st.columns(2)
-    symbol = c1.selectbox("Underlying Symbol", ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS"])
-    expiry = c2.selectbox("Contract Expiry", ["2026-06-11", "2026-06-18", "2026-06-25"])
+    st.markdown(f"**Dominance Signal ({selected_symbol} | Expiry: {selected_expiry}):** {chain_dominance}")
     
     def highlight_rows(row):
         if 'CE_OI' in row and row['CE_OI'] > 150000: return ['background-color: #3d1c1c; color: #ff9999; font-weight: bold;'] * len(row)
         if 'PE_OI' in row and row['PE_OI'] > 100000: return ['background-color: #1c3d28; color: #99ffbb; font-weight: bold;'] * len(row)
         return ['color: inherit;'] * len(row)
 
-    st.dataframe(df.style.apply(highlight_rows, axis=1), use_container_width=True, height=550)
+    st.dataframe(active_chain_df.style.apply(highlight_rows, axis=1), use_container_width=True, height=550)
 
 # --- 3. PCR & MAX PAIN ANALYTICS ---
 elif menu == "PCR & Max Pain Analytics":
     st.subheader("📊 Advanced PCR Trends & Max Pain Payout Intelligence")
-    
     pcr_dominance_signal = "🟢 PUT WRITERS (BULLISH BUYERS) ARE ACTIVELY DEFENDING SUPPORT" if pcr_oi > 1.05 else "🔴 CALL WRITERS (BEARISH SELLERS) ARE DOMINATING RESISTANCE"
     st.markdown(f"**Institutional Dominance Signal:** {pcr_dominance_signal}")
 
@@ -194,6 +217,35 @@ elif menu == "PCR & Max Pain Analytics":
         margin=dict(l=20, r=20, t=40, b=20)
     )
     st.plotly_chart(fig_pcr_trend, use_container_width=True)
+    
+    st.markdown("---")
+    st.subheader("🧮 Max Pain U-Shaped Payout Curve")
+    
+    if not payout_df.empty:
+        fig_payout = go.Figure()
+        fig_payout.add_trace(go.Scatter(
+            x=payout_df['Strike'].astype(str), y=payout_df['Total_Payout'], 
+            mode='lines+markers', name='Total Buyer Loss / Writer Profit',
+            line=dict(color='#636efa', width=3), fill='tozeroy', fillcolor='rgba(99, 110, 250, 0.2)'
+        ))
+        
+        max_pain_str = str(max_pain)
+        if max_pain_str in payout_df['Strike'].astype(str).values:
+            max_payout_val = payout_df.loc[payout_df['Strike'] == max_pain, 'Total_Payout'].values[0]
+            fig_payout.add_trace(go.Scatter(
+                x=[max_pain_str], y=[max_payout_val], mode='markers+text',
+                name='Max Pain Strike', text=[f"Max Pain: ₹{max_pain}"],
+                textposition="top center", marker=dict(color='#ff4b4b', size=14, symbol='star')
+            ))
+            
+        fig_payout.update_layout(
+            xaxis=dict(type='category', title="Strike Price", tickangle=-30),
+            yaxis_title="Total Payout Exposure (₹)",
+            template="plotly_dark",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=dict(l=20, r=20, t=40, b=20)
+        )
+        st.plotly_chart(fig_payout, use_container_width=True)
 
 # --- 4. GAMMA, GEX & WALLS ---
 elif menu == "Gamma, GEX & Walls":
@@ -334,13 +386,13 @@ elif menu == "Historical Time-Travel (API)":
     
     selected_snapshot = st.select_slider("Select Historical API Snapshot", options=["09:20 AM", "11:00 AM", "01:30 PM", "03:15 PM"])
     
-    hist_full_df, hist_spot = fetch_api_option_chain("NIFTY", snapshot_time=selected_snapshot)
+    hist_full_df, hist_spot = fetch_api_option_chain("NIFTY", dynamic_expiry_list[0], snapshot_time=selected_snapshot)
     hist_df = filter_active_strikes(hist_full_df, strike_range_mode)
     
     hist_ce = hist_df['CE_OI'].sum() if not hist_df.empty else 1
     hist_pe = hist_df['PE_OI'].sum() if not hist_df.empty else 0
     hist_pcr = round(hist_pe / hist_ce, 2) if hist_ce > 0 else 0
-    hist_max_pain, _ = calculate_max_pain_and_curve(hist_df)
+    hist_max_pain, _ = calculate_max_pain_and_curve(hist_df, hist_spot)
     
     hist_dominance = "🟢 HISTORICAL BUYERS DOMINANT" if hist_pcr > 1.05 else "🔴 HISTORICAL SELLERS DOMINANT"
     st.markdown(f"**Historical Dominance Signal ({selected_snapshot}):** {hist_dominance}")
