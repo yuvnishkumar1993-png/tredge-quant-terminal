@@ -70,3 +70,36 @@ def get_asset_details_from_master(symbol):
     }
     fb = fallbacks.get(symbol.upper(), {"id": 13, "seg": "NSE_FNO", "lot": 50})
     return fb["id"], fb["seg"], fb["lot"]
+@st.cache_data(ttl=600)
+def get_available_symbols():
+    """
+    Scans api-scrip-master.csv and dynamically extracts all underlying 
+    Indices (IDX_I) and Equity/F&O stocks (NSE_EQ).
+    """
+    for file in os.listdir("."):
+        if file.endswith(".csv"):
+            try:
+                df = pd.read_csv(file, low_memory=False)
+                df.columns = [str(col).strip().upper() for col in df.columns]
+                
+                sym_col = next((c for c in df.columns if 'TRADING_SYMBOL' in c or 'SYMBOL' in c), None)
+                seg_col = next((c for c in df.columns if 'SEM_EXCH_SEG' in c or 'EXCH_SEGMENT' in c or 'SEGMENT' in c), None)
+                
+                if sym_col and seg_col:
+                    # Filter for Indices and Equities which act as F&O underlyings
+                    filtered = df[df[seg_col].astype(str).str.upper().isin(['IDX_I', 'NSE_EQ'])]
+                    if not filtered.empty:
+                        syms = sorted(filtered[sym_col].dropna().unique().tolist())
+                        # Clean up: remove symbols with spaces or special characters (option contracts)
+                        clean_syms = [str(s) for s in syms if ' ' not in str(s) and '-' not in str(s)]
+                        
+                        if clean_syms:
+                            # Put major indices & F&O stocks at the top, followed by rest
+                            priority = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "RELIANCE", "TCS", "INFY", "SBIN", "HDFCBANK", "ICICIBANK"]
+                            final_list = [p for p in priority if p in clean_syms] + [s for s in clean_syms if s not in priority]
+                            return final_list
+            except:
+                continue
+                
+    # Fallback default list if CSV reading fails
+    return ["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "TCS", "INFY", "SBIN", "HDFCBANK", "ICICIBANK", "TATAMOTORS"]
