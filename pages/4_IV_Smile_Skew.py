@@ -1,180 +1,137 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import requests
 import os
 import plotly.graph_objects as go
 
-# --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Institutional IV Smile & Skew Desk", page_icon="📉", layout="wide")
-
-# --- CUSTOM PROFESSIONAL STYLING ---
-st.markdown("""
-    <style>
-    .main {background-color: #080b10; color: #e6edf3;}
-    .metric-container {
-        background: linear-gradient(135deg, #161b22 0%, #0d1117 100%);
-        padding: 18px; border-radius: 8px; border: 1px solid #30363d;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-    }
-    .insight-box {
-        background-color: rgba(31, 111, 235, 0.1); 
-        border-left: 4px solid #1f6feb; 
-        padding: 15px; border-radius: 4px; margin-bottom: 20px;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
 st.markdown("## 📉 Advanced Implied Volatility (IV) Smile & Skew Desk")
 st.markdown("---")
 
-# --- DYNAMIC CSV MASTER LOADER ---
 @st.cache_data(ttl=60)
-def load_dynamic_csv_master():
-    possible_files = ["api-scrip-master.csv", "MW-All-Indices-08-Aug-2026.csv", "MW-FO-stock_fut-08-Aug-2026.csv"]
+def load_dhan_master():
     for file in os.listdir("."):
-        if file.endswith(".csv") and file not in possible_files:
-            possible_files.insert(0, file)
-    for path in possible_files:
-        if os.path.exists(path):
+        if file.endswith(".csv"):
             try:
-                df = pd.read_csv(path, low_memory=False)
+                df = pd.read_csv(file, low_memory=False)
                 df.columns = [str(col).strip().upper() for col in df.columns]
-                return df, path
+                return df
             except:
                 continue
-    return pd.DataFrame(), "None"
+    return pd.DataFrame()
 
-df_master, active_file = load_dynamic_csv_master()
+df_master = load_dhan_master()
+is_auth = st.session_state.get("dhan_authenticated", False)
+client_id = st.session_state.get("client_id", "")
+access_token = st.session_state.get("access_token", "")
 
-# --- SIDEBAR CONTROLS ---
+if "global_symbol" not in st.session_state:
+    st.session_state.global_symbol = "NIFTY"
+
 st.sidebar.markdown("### ⚙️ IV Desk Parameters")
 selected_symbol = st.sidebar.selectbox(
     "Select Underlying Asset", 
     ["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "TCS", "INFY", "SBIN"],
-    key="iv_symbol_pro"
+    index=["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "TCS", "INFY", "SBIN"].index(st.session_state.global_symbol) if st.session_state.global_symbol in ["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "TCS", "INFY", "SBIN"] else 0,
+    key="global_symbol_iv"
 )
+st.session_state.global_symbol = selected_symbol
 
-spot_defaults = {"NIFTY": 24500.0, "BANKNIFTY": 50500.0, "FINNIFTY": 23200.0, "RELIANCE": 2950.0, "TCS": 4100.0}
-ref_spot = spot_defaults.get(selected_symbol, 24500.0)
+index_mapping = {
+    "NIFTY": {"id": 13, "seg": "IDX_I"},
+    "BANKNIFTY": {"id": 25, "seg": "IDX_I"},
+    "FINNIFTY": {"id": 27, "seg": "IDX_I"}
+}
 
-# --- GENERATING IV SMILE DATA ---
-np.random.seed(42)
-strike_step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
-atm_strike = round(ref_spot / strike_step) * strike_step
-
-strikes = [atm_strike + (i * strike_step) for i in range(-12, 13)]
-
-iv_records = []
-for s in strikes:
-    dist_pct = abs(s - ref_spot) / ref_spot
-    base_iv = 13.5 + (dist_pct * 100 * dist_pct)
-    skew_adjustment = -0.5 if s > ref_spot else 1.5
-    iv_val = round(base_iv + skew_adjustment + np.random.normal(0, 0.2), 2)
-    iv_val = max(8.5, iv_val)
-    
-    moneyness_type = "ATM (At-The-Money)" if s == atm_strike else ("OTM Put (Downside)" if s < atm_strike else "OTM Call (Upside)")
-    
-    iv_records.append({
-        "Strike": int(s),
-        "Type": moneyness_type,
-        "IV (%)": iv_val,
-        "Option Delta": round(0.5 + (ref_spot - s)/1000, 2)
-    })
-
-iv_df = pd.DataFrame(iv_records)
-
-atm_row = iv_df[iv_df['Strike'] == atm_strike]
-atm_iv = float(atm_row['IV (%)'].values[0]) if not atm_row.empty else 13.5
-
-put_iv_avg = float(iv_df[iv_df['Strike'] < atm_strike]['IV (%)'].mean())
-call_iv_avg = float(iv_df[iv_df['Strike'] > atm_strike]['IV (%)'].mean())
-skew_spread = round(put_iv_avg - call_iv_avg, 2)
-
-# --- TOP SUMMARY METRICS ---
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    st.markdown("<div class='metric-container'>", unsafe_allow_html=True)
-    st.metric(label="ATM Benchmark IV", value=f"{atm_iv}%", delta="Baseline Pricing")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with col2:
-    st.markdown("<div class='metric-container'>", unsafe_allow_html=True)
-    st.metric(label="Put Skew Spread", value=f"+{skew_spread}%", delta="Protection Cost")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with col3:
-    st.markdown("<div class='metric-container'>", unsafe_allow_html=True)
-    market_mood = "High Fear / Hedging Heavy" if skew_spread > 2.0 else "Normal / Balanced Smile"
-    st.metric(label="Market Sentiment", value=market_mood, delta="Volatility Regime")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-with col4:
-    st.markdown("<div class='metric-container'>", unsafe_allow_html=True)
-    st.metric(label="Reference Spot", value=f"₹{ref_spot:,.2f}", delta=selected_symbol)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-st.markdown("---")
-
-# --- INSTANT EASY-TO-UNDERSTAND INSIGHT BOX ---
-st.markdown("### 🧠 Institutional Intelligence & Takeaway")
-if skew_spread > 2.0:
-    st.markdown("""
-        <div class='insight-box'>
-            <b>📌 Trader Takeaway:</b> पुट साइड (Put Side) का IV कॉल साइड से काफी ऊपर है। इसका साफ मतलब है कि बड़े ट्रेडर्स और संस्थाएं <b>मंदी (Crash Protection) के लिए भारी प्रीमियम चुका रही हैं</b>। बाजार में नीचे की तरफ सावधानी बरतने की जरूरत है।
-        </div>
-    """, unsafe_allow_html=True)
+if selected_symbol in index_mapping:
+    resolved_sec_id = index_mapping[selected_symbol]["id"]
+    resolved_seg = index_mapping[selected_symbol]["seg"]
 else:
-    st.markdown("""
-        <div class='insight-box'>
-            <b>📌 Trader Takeaway:</b> वोलैटिलिटी स्माइल संतुलित (Balanced) है। कॉल और पुट दोनों तरफ प्रीमियम सामान्य रूप से ट्रेड हो रहा है। यह न्यूट्रल से बुलिश कंसोलिडेशन का संकेत है।
-        </div>
-    """, unsafe_allow_html=True)
+    resolved_sec_id = 13
+    resolved_seg = "NSE_FNO"
+    if not df_master.empty:
+        sym_col = next((c for c in df_master.columns if 'SYMBOL' in c or 'TRADING' in c), None)
+        id_col = next((c for c in df_master.columns if 'ID' in c), None)
+        seg_col = next((c for c in df_master.columns if 'SEGMENT' in c or 'EXCH' in c), None)
+        if sym_col and id_col:
+            matched = df_master[df_master[sym_col].astype(str).str.contains(selected_symbol, na=False)]
+            if not matched.empty:
+                resolved_sec_id = int(matched.iloc[0][id_col])
+                if seg_col: resolved_seg = str(matched.iloc[0][seg_col])
 
-# --- PLOTLY ADVANCED CLEAN SMILE CURVE ---
-st.markdown(f"### 📊 Volatility Smile Structure for `{selected_symbol}`")
+expiries = ["2026-08-11", "2026-08-18", "2026-08-25"]
+if is_auth and access_token:
+    try:
+        exp_url = "https://api.dhan.co/v2/optionchain/expirylist"
+        headers = {"access-token": access_token.strip(), "client-id": client_id.strip(), "Content-Type": "application/json"}
+        res = requests.post(exp_url, json={"UnderlyingScrip": resolved_sec_id, "UnderlyingSeg": resolved_seg}, headers=headers, timeout=5)
+        if res.status_code == 200:
+            data = res.json().get("data", [])
+            if data: expiries = data
+    except:
+        pass
 
-fig = go.Figure()
+selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="iv_exp")
+chart_range_mode = st.selectbox("Select Strike Span for IV Smile:", ["±10 Strikes", "±20 Strikes", "All Strikes (Full Chain)"], index=0, key="iv_range")
 
-# Adding Smile Curve Line
-fig.add_trace(go.Scatter(
-    x=iv_df['Strike'],
-    y=iv_df['IV (%)'],
-    mode='lines+markers',
-    name='Implied Volatility (IV)',
-    line=dict(color='#58a6ff', width=3),
-    marker=dict(size=8, color=np.where(iv_df['Strike'] == atm_strike, '#ffd33d', '#58a6ff'))
-))
+@st.cache_data(ttl=15)
+def fetch_iv_data(c_id, token, sec_id, seg, exp):
+    if not c_id or not token: return pd.DataFrame(), 0.0
+    url = "https://api.dhan.co/v2/optionchain"
+    headers = {"access-token": token.strip(), "client-id": c_id.strip(), "Content-Type": "application/json"}
+    try:
+        res = requests.post(url, json={"UnderlyingScrip": int(sec_id), "UnderlyingSeg": str(seg).strip(), "Expiry": str(exp).strip()}, headers=headers, timeout=8)
+        if res.status_code == 200:
+            block = res.json().get("data", {})
+            spot_val = float(block.get("last_price", 0.0))
+            oc_map = block.get("oc", {})
+            records = []
+            for s_str, obj in oc_map.items():
+                s_val = float(s_str)
+                ce_iv = float(obj.get("ce", {}).get("iv", 15.0))
+                pe_iv = float(obj.get("pe", {}).get("iv", 15.0))
+                avg_iv = round((ce_iv + pe_iv) / 2.0, 2)
+                records.append({
+                    "Strike": int(s_val),
+                    "IV (%)": avg_iv if avg_iv > 0 else 14.0
+                })
+            return pd.DataFrame(records), spot_val
+    except:
+        pass
+    return pd.DataFrame(), 0.0
 
-# ATM Indicator Line
-fig.add_vline(
-    x=atm_strike, 
-    line_dash="dot", 
-    line_color="#ffd33d", 
-    annotation_text=f"ATM Strike ({atm_strike})", 
-    annotation_position="top"
-)
+iv_df, live_spot = fetch_iv_data(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry)
+spot_defaults = {"NIFTY": 24500.0, "BANKNIFTY": 50500.0, "FINNIFTY": 23200.0, "RELIANCE": 2950.0}
+if live_spot == 0.0: live_spot = spot_defaults.get(selected_symbol, 50500.0 if selected_symbol=="BANKNIFTY" else 24500.0)
 
-fig.update_layout(
-    template='plotly_dark',
-    plot_bgcolor='#0d1117',
-    paper_bgcolor='#0d1117',
-    height=480,
-    xaxis_title="Strike Prices (Left: Puts / Right: Calls)",
-    yaxis_title="Implied Volatility (%)",
-    margin=dict(l=20, r=20, t=30, b=20),
-    hovermode="x unified"
-)
+if iv_df.empty:
+    step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
+    atm = round(live_spot / step) * step
+    strikes = [atm + (i * step) for i in range(-25, 26)]
+    iv_df = pd.DataFrame([{"Strike": int(s), "IV (%)": round(14.0 + abs(s - live_spot)/100, 2)} for s in strikes])
 
-st.plotly_chart(fig, use_container_width=True)
+iv_df['Dist'] = abs(iv_df['Strike'] - live_spot)
+center_idx = iv_df['Dist'].idxmin()
+if "±10" in chart_range_mode:
+    disp_iv = iv_df.iloc[max(0, center_idx-10):min(len(iv_df), center_idx+11)]
+elif "±20" in chart_range_mode:
+    disp_iv = iv_df.iloc[max(0, center_idx-20):min(len(iv_df), center_idx+21)]
+else:
+    disp_iv = iv_df
 
-# --- DETAILED STRIKE MATRIX TABLE ---
+atm_iv = float(iv_df.loc[center_idx, 'IV (%)']) if not iv_df.empty else 14.0
+
+c1, c2, c3, c4 = st.columns(4)
+with c1: st.metric(label=f"Asset ({selected_symbol})", value=str(resolved_sec_id))
+with c2: st.metric(label="Live Spot", value=f"₹{live_spot:,.2f}")
+with c3: st.metric(label="ATM IV", value=f"{atm_iv}%")
+with c4: st.metric(label="Volatility Regime", value="Balanced Smile")
+
 st.markdown("---")
-st.markdown("### 📋 Strike-wise IV Breakdown Matrix")
-
-def highlight_atm(row):
-    if row['Strike'] == atm_strike:
-        return ['background-color: #1f6feb; color: white; font-weight: bold;'] * len(row)
-    return [''] * len(row)
-
-st.dataframe(iv_df.style.apply(highlight_atm, axis=1), use_container_width=True, height=320, hide_index=True)
+st.markdown(f"### 📊 Volatility Smile Structure (`{selected_symbol}`) | View: `{chart_range_mode}`")
+fig = go.Figure()
+fig.add_trace(go.Scatter(x=disp_iv['Strike'], y=disp_iv['IV (%)'], mode='lines+markers', line=dict(color='#58a6ff', width=3)))
+fig.add_vline(x=live_spot, line_dash="dash", line_color="#ffd33d", annotation_text="Spot")
+fig.update_layout(template='plotly_dark', plot_bgcolor='#0d1117', paper_bgcolor='#0d1117', height=450)
+st.plotly_chart(fig, use_container_width=True)
