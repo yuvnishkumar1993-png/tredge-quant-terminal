@@ -79,7 +79,7 @@ if is_auth and access_token:
 
 selected_expiry = st.sidebar.selectbox("Select Expiry Date for GEX", expiries)
 
-# Lot sizes for institutional GEX financial scaling
+# Lot sizes for institutional GEX scaling
 lot_sizes = {"NIFTY": 25, "BANKNIFTY": 15, "FINNIFTY": 25, "RELIANCE": 250, "TCS": 175, "INFY": 400, "SBIN": 750}
 lot_size = lot_sizes.get(selected_symbol, 25)
 
@@ -88,11 +88,10 @@ def norm_pdf(x):
     return math.exp(-0.5 * x**2) / math.sqrt(2 * math.pi)
 
 def calculate_gamma(S, K, T, sigma):
-    """Computes exact Option Gamma using Black-Scholes formula"""
     if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
         return 0.0
     try:
-        r = 0.06 # Risk-free interest rate ~6%
+        r = 0.06
         d1 = (math.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
         gamma = norm_pdf(d1) / (S * sigma * math.sqrt(T))
         return gamma
@@ -121,7 +120,6 @@ def fetch_and_compute_gex(c_id, token, sec_id, seg, exp, lot):
                 return pd.DataFrame(), spot_val
                 
             records = []
-            # Assuming 7 days (0.019 years) to expiry if exact time isn't derived
             T_years = 7.0 / 365.0 
             
             for s_str, obj in oc_map.items():
@@ -131,16 +129,12 @@ def fetch_and_compute_gex(c_id, token, sec_id, seg, exp, lot):
                 
                 ce_oi = float(ce.get("oi", 0))
                 pe_oi = float(pe.get("oi", 0))
-                
                 ce_iv = float(ce.get("iv", 15.0)) / 100.0
                 pe_iv = float(pe.get("iv", 15.0)) / 100.0
                 
-                # Calculate Gamma for Calls and Puts
                 ce_gamma = calculate_gamma(spot_val, s_val, T_years, ce_iv if ce_iv > 0 else 0.15)
                 pe_gamma = calculate_gamma(spot_val, s_val, T_years, pe_iv if pe_iv > 0 else 0.15)
                 
-                # GEX formula: OI * Gamma * Spot^2 * 0.01 * Lot Size (Converted to ₹ Crores)
-                # Call GEX is positive (market makers short calls -> long gamma), Put GEX is negative contribution
                 ce_gex = (ce_oi * ce_gamma * (spot_val ** 2) * 0.01 * lot) / 10000000.0
                 pe_gex = (pe_oi * pe_gamma * (spot_val ** 2) * 0.01 * lot) / 10000000.0
                 
@@ -179,9 +173,9 @@ if gex_df.empty:
         cg = round(np.random.uniform(5, 45), 2)
         pg = round(np.random.uniform(5, 45), 2)
         if s > live_spot:
-            cg *= 1.8 # Higher call wall above spot
+            cg *= 1.8 
         else:
-            pg *= 1.8 # Higher put wall below spot
+            pg *= 1.8 
         mock_recs.append({
             "Strike": int(s),
             "Call GEX (₹ Cr)": cg,
@@ -199,7 +193,6 @@ put_wall_row = gex_df.loc[gex_df['Put GEX (₹ Cr)'].idxmax()] if not gex_df.emp
 call_wall = int(call_wall_row['Strike']) if call_wall_row is not None else int(live_spot + 200)
 put_wall = int(put_wall_row['Strike']) if put_wall_row is not None else int(live_spot - 200)
 
-# Find Gamma Flip Point (Strike where Net GEX crosses from negative to positive)
 flip_strike = int(live_spot)
 for i in range(len(gex_df) - 1):
     g1 = gex_df.iloc[i]['Net GEX (₹ Cr)']
@@ -233,37 +226,20 @@ with c4:
 
 st.markdown("---")
 
-# --- INSTITUTIONAL INTELLIGENCE TAKEAWAY ---
-st.markdown("### 🧠 Dealer Hedging Intelligence & Regime Analysis")
-if total_net_gex > 0:
-    st.markdown("""
-        <div style='background-color: rgba(46, 160, 67, 0.1); border-left: 4px solid #2ea043; padding: 15px; border-radius: 4px; margin-bottom: 20px;'>
-            <b>🟢 Positive GEX Regime (Mean-Reverting):</b> बाजार में पॉजिटिव गामा हावी है। इसका मतलब है कि मार्केट मेकर (Dealers) बाजार गिरने पर नीचे शेयर खरीदेंगे और ऊपर जाने पर बेचेंगे। यह बाजार को शांत रखेगा और एक निश्चित दायरे (Range-bound) में रखेगा।
-        </div>
-    """, unsafe_allow_html=True)
-else:
-    st.markdown("""
-        <div style='background-color: rgba(248, 81, 73, 0.1); border-left: 4px solid #f85149; padding: 15px; border-radius: 4px; margin-bottom: 20px;'>
-            <b>🔴 Negative GEX Regime (Momentum / Breakout):</b> बाजार में नेगेटिव गामा हावी है। यहाँ डीलर्स को बाजार गिरने पर और शॉर्ट करना पड़ता है और चढ़ने पर और खरीदना पड़ता है। यह तेज ब्रेकआउट या गिरावट (High Volatility) को जन्म देता है।
-        </div>
-    """, unsafe_allow_html=True)
-
 # --- ADVANCED PLOTLY GEX PROFILE BAR CHART ---
 st.markdown(f"### 📊 Strike-wise Gamma Exposure Profile for `{selected_symbol}`")
 
 fig = go.Figure()
 
-# Add Net GEX Bar Chart with dynamic colors
 colors = ['#2ea043' if val >= 0 else '#f85149' for val in gex_df['Net GEX (₹ Cr)']]
 
 fig.add_trace(go.Bar(
     x=gex_df['Strike'],
-    y=gex_df['Net GEX (₹ Cr] if 'Net GEX (₹ Cr)' in gex_df.columns else gex_df['Net GEX (₹ Cr)'],
+    y=gex_df['Net GEX (₹ Cr)'],
     name="Net GEX (₹ Cr)",
     marker_color=colors
 ))
 
-# Highlight Spot Price & Walls
 fig.add_vline(x=live_spot, line_dash="solid", line_color="#58a6ff", annotation_text=f"Spot ({live_spot})", annotation_position="top")
 fig.add_vline(x=call_wall, line_dash="dash", line_color="#f85149", annotation_text=f"Call Wall ({call_wall})", annotation_position="bottom right")
 fig.add_vline(x=put_wall, line_dash="dash", line_color="#2ea043", annotation_text=f"Put Wall ({put_wall})", annotation_position="bottom left")
