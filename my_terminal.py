@@ -22,10 +22,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- APP HEADER ---
-st.title("⚡ Quant Trading Terminal Pro [API-Driven Historical Engine]")
-st.markdown("Advanced F&O Analytics, Active Strike GEX Mapping & Historical API Time-Travel Intelligence")
+st.title("⚡ Quant Trading Terminal Pro [Institutional Edition]")
+st.markdown("Advanced F&O Analytics, Active Strike GEX Mapping & Quantitative Risk Intelligence")
 
-# --- SIDEBAR NAVIGATION & CONTROLS (Cleaned: No CSV Uploader) ---
+# --- SIDEBAR NAVIGATION & CONTROLS ---
 st.sidebar.header("System Navigation")
 menu = st.sidebar.selectbox(
     "Select Analytics Module",
@@ -51,10 +51,6 @@ strike_range_mode = st.sidebar.radio(
 # --- LIVE & HISTORICAL BROKER API DATA ENGINE ---
 @st.cache_data
 def fetch_api_option_chain(symbol="NIFTY", snapshot_time="Live"):
-    """
-    Direct Broker API Data Gateway. Fetches Live or Historical Snapshot 
-    Option Chain data with full OI, Volume, IV, and Greeks for calculations.
-    """
     seed_val = hash(snapshot_time) % 10000 if snapshot_time != "Live" else int(datetime.now().timestamp() // 60)
     np.random.seed(seed_val)
     
@@ -73,7 +69,6 @@ def fetch_api_option_chain(symbol="NIFTY", snapshot_time="Live"):
     spot_ref = 24600.00
     return df_api, spot_ref
 
-# Load default Live Data for general views
 full_df, spot_price = fetch_api_option_chain("NIFTY", "Live")
 
 # --- ACTIVE STRIKE CENTRIC FILTER ENGINE ---
@@ -213,19 +208,61 @@ elif menu == "PCR & Max Pain Analytics":
         )
         st.plotly_chart(fig_payout, use_container_width=True)
 
-# --- 4. GAMMA, GEX & WALLS ---
+# --- 4. GAMMA, GEX & WALLS (REDESIGNED INSTITUTIONAL MODULE) ---
 elif menu == "Gamma, GEX & Walls":
-    st.subheader("⚡ Active Strike Centric Gamma Walls & GEX Exposure")
-    ce_gex = df['CE_OI'] * df['CE_Gamma'] * -100
-    pe_gex = df['PE_OI'] * df['PE_Gamma'] * 100
+    st.subheader("⚡ Institutional Gamma Exposure (GEX) & Wall Intelligence")
+    st.markdown("Advanced quantitative analysis tracking Dealer Hedging Flows, Gamma Flip Thresholds, and Major Liquidity Walls.")
+    
+    # Calculate GEX Metrics
+    df['CE_GEX'] = df['CE_OI'] * df['CE_Gamma'] * -100
+    df['PE_GEX'] = df['PE_OI'] * df['PE_Gamma'] * 100
+    df['Net_GEX'] = df['CE_GEX'] + df['PE_GEX']
+    
+    total_net_gex = df['Net_GEX'].sum()
+    gex_environment = "POSITIVE (+): Mean-Reverting / Range-Bound" if total_net_gex >= 0 else "NEGATIVE (-): High Volatility / Breakout Risk"
+    
+    # Find Walls and Flip Points
+    max_call_wall_strike = df.loc[df['CE_GEX'].idxmin(), 'Strike'] if not df.empty else spot_price
+    max_put_wall_strike = df.loc[df['PE_GEX'].idxmax(), 'Strike'] if not df.empty else spot_price
+    gamma_flip_strike = df.loc[(df['Net_GEX'] >= 0).idxmax(), 'Strike'] if not df.empty else spot_price
+
+    # Display Institutional Summary Metrics Cards
+    gc1, gc2, gc3, gc4 = st.columns(4)
+    gc1.metric("Net GEX Environment", "POSITIVE" if total_net_gex >= 0 else "NEGATIVE", gex_environment)
+    gc2.metric("Gamma Flip Threshold", f"₹{gamma_flip_strike:,.0f}", "Dealer Hedging Pivoting Point")
+    gc3.metric("Max Call Wall (Resistance)", f"₹{max_call_wall_strike:,.0f}", "Heavy Dealer Short Gamma Zone")
+    gc4.metric("Max Put Wall (Support)", f"₹{max_put_wall_strike:,.0f}", "Heavy Dealer Long Gamma Zone")
+    
+    st.markdown("---")
+    
+    # Institutional Commentary Box
+    if total_net_gex >= 0:
+        st.success("📌 **Market Regime Insight:** The market is currently operating in a **Positive Gamma Environment**. Market makers (Dealers) are mandated to buy dips and sell rallies to maintain delta neutrality, suppressing intraday volatility and favoring range-bound strategies.")
+    else:
+        st.error("⚠️ **Market Regime Insight:** The market is currently operating in a **Negative Gamma Environment**. Dealers are forced to sell into market declines and buy into rallies, significantly amplifying intraday velocity and breakout risks.")
+
+    st.markdown("---")
+    
+    # Professional Relative Bar Chart for GEX Walls
+    st.subheader("📊 Active Strike GEX Profile & Liquidity Walls")
+    strike_str_gex = df['Strike'].astype(str)
     
     fig_gex = go.Figure()
-    fig_gex.add_trace(go.Bar(x=df['Strike'].astype(str), y=ce_gex, name='Call Wall (Resistance)', marker_color='#ff4b4b'))
-    fig_gex.add_trace(go.Bar(x=df['Strike'].astype(str), y=pe_gex, name='Put Wall (Support)', marker_color='#00cc96'))
+    fig_gex.add_trace(go.Bar(
+        x=strike_str_gex, y=df['CE_GEX'], 
+        name='Call Wall / Resistance (Dealer Short Gamma)', 
+        marker_color='#ff4b4b'
+    ))
+    fig_gex.add_trace(go.Bar(
+        x=strike_str_gex, y=df['PE_GEX'], 
+        name='Put Wall / Support (Dealer Long Gamma)', 
+        marker_color='#00cc96'
+    ))
+    
     fig_gex.update_layout(
         barmode='relative',
-        xaxis=dict(type='category', title="Strike Price", tickangle=-30),
-        yaxis_title="Net GEX",
+        xaxis=dict(type='category', title="Active Strike Price", tickangle=-30),
+        yaxis_title="Gamma Exposure (GEX in ₹)",
         template="plotly_dark",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(l=20, r=20, t=40, b=20)
