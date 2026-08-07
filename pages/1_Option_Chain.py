@@ -47,23 +47,32 @@ with col1:
     )
 
 with col2:
-    # Resolving Scrip ID and Segment safely
-    resolved_sec_id = 13
-    resolved_seg = "IDX_I"
+    # --- DIRECT INDEX MAPPING (BULLETPROOF FIX FOR INDICES) ---
+    index_mapping = {
+        "NIFTY": {"id": 13, "seg": "IDX_I"},
+        "BANKNIFTY": {"id": 25, "seg": "IDX_I"},
+        "FINNIFTY": {"id": 27, "seg": "IDX_I"}
+    }
     
-    if not df_master.empty:
-        sym_col = next((c for c in df_master.columns if 'SYMBOL' in c or 'TRADING' in c), None)
-        seg_col = next((c for c in df_master.columns if 'SEGMENT' in c or 'EXCH' in c), None)
-        id_col = next((c for c in df_master.columns if 'ID' in c), None)
-        
-        if sym_col and id_col and seg_col:
-            matched = df_master[df_master[sym_col].astype(str).str.contains(selected_symbol, na=False)]
-            if not matched.empty:
-                try:
-                    resolved_sec_id = int(matched.iloc[0][id_col])
-                    resolved_seg = str(matched.iloc[0][seg_col])
-                except:
-                    pass
+    if selected_symbol in index_mapping:
+        resolved_sec_id = index_mapping[selected_symbol]["id"]
+        resolved_seg = index_mapping[selected_symbol]["seg"]
+    else:
+        resolved_sec_id = 13
+        resolved_seg = "NSE_FNO"
+        if not df_master.empty:
+            sym_col = next((c for c in df_master.columns if 'SYMBOL' in c or 'TRADING' in c), None)
+            seg_col = next((c for c in df_master.columns if 'SEGMENT' in c or 'EXCH' in c), None)
+            id_col = next((c for c in df_master.columns if 'ID' in c), None)
+            
+            if sym_col and id_col and seg_col:
+                matched = df_master[df_master[sym_col].astype(str).str.contains(selected_symbol, na=False)]
+                if not matched.empty:
+                    try:
+                        resolved_sec_id = int(matched.iloc[0][id_col])
+                        resolved_seg = str(matched.iloc[0][seg_col])
+                    except:
+                        pass
 
     # Fetching Expiry List from Dhan API if authenticated
     expiries = ["2026-08-11", "2026-08-18", "2026-08-25"]
@@ -84,7 +93,7 @@ with col2:
 
 with col3:
     spot_defaults = {"NIFTY": 24500.0, "BANKNIFTY": 50500.0, "FINNIFTY": 23200.0, "RELIANCE": 2950.0}
-    live_spot = st.number_input("Live Spot Price", value=spot_defaults.get(selected_symbol, 24500.0), step=1.0)
+    live_spot = st.number_input("Live Spot Price", value=spot_defaults.get(selected_symbol, 50500.0 if selected_symbol=="BANKNIFTY" else 24500.0), step=1.0)
 
 with col4:
     strike_range = st.selectbox("Strike Range", ["±10 Strikes", "±20 Strikes", "Full Chain"])
