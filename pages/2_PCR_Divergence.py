@@ -12,7 +12,7 @@ st.set_page_config(page_title="Institutional PCR & Divergence Desk", page_icon="
 st.markdown("## 📈 Institutional PCR Divergence & Dynamic Spot Analytics")
 st.markdown("---")
 
-# --- 1. DYNAMIC CSV MASTER LOADER (For Scrip ID & Segment) ---
+# --- 1. DYNAMIC CSV MASTER LOADER ---
 @st.cache_data(ttl=60)
 def load_dhan_master():
     possible_files = ["api-scrip-master.csv", "MW-All-Indices-08-Aug-2026.csv", "MW-FO-stock_fut-08-Aug-2026.csv"]
@@ -31,7 +31,6 @@ def load_dhan_master():
 
 df_master, active_file = load_dhan_master()
 
-# Check authentication state
 is_auth = st.session_state.get("dhan_authenticated", False)
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
@@ -44,25 +43,33 @@ selected_symbol = st.sidebar.selectbox(
     key="pcr_symbol_pro"
 )
 
-# Resolve Scrip ID & Segment
-resolved_sec_id = 13
-resolved_seg = "IDX_I"
+# --- BULLETPROOF INDEX MAPPING ---
+index_mapping = {
+    "NIFTY": {"id": 13, "seg": "IDX_I"},
+    "BANKNIFTY": {"id": 25, "seg": "IDX_I"},
+    "FINNIFTY": {"id": 27, "seg": "IDX_I"}
+}
 
-if not df_master.empty:
-    sym_col = next((c for c in df_master.columns if 'SYMBOL' in c or 'TRADING' in c), None)
-    seg_col = next((c for c in df_master.columns if 'SEGMENT' in c or 'EXCH' in c), None)
-    id_col = next((c for c in df_master.columns if 'ID' in c), None)
-    
-    if sym_col and id_col and seg_col:
-        matched = df_master[df_master[sym_col].astype(str).str.contains(selected_symbol, na=False)]
-        if not matched.empty:
-            try:
-                resolved_sec_id = int(matched.iloc[0][id_col])
-                resolved_seg = str(matched.iloc[0][seg_col])
-            except:
-                pass
+if selected_symbol in index_mapping:
+    resolved_sec_id = index_mapping[selected_symbol]["id"]
+    resolved_seg = index_mapping[selected_symbol]["seg"]
+else:
+    resolved_sec_id = 13
+    resolved_seg = "NSE_FNO"
+    if not df_master.empty:
+        sym_col = next((c for c in df_master.columns if 'SYMBOL' in c or 'TRADING' in c), None)
+        seg_col = next((c for c in df_master.columns if 'SEGMENT' in c or 'EXCH' in c), None)
+        id_col = next((c for c in df_master.columns if 'ID' in c), None)
+        
+        if sym_col and id_col and seg_col:
+            matched = df_master[df_master[sym_col].astype(str).str.contains(selected_symbol, na=False)]
+            if not matched.empty:
+                try:
+                    resolved_sec_id = int(matched.iloc[0][id_col])
+                    resolved_seg = str(matched.iloc[0][seg_col])
+                except:
+                    pass
 
-# Fetch Expiry list
 expiries = ["2026-08-11", "2026-08-18", "2026-08-25"]
 if is_auth and access_token:
     try:
@@ -79,7 +86,7 @@ if is_auth and access_token:
 
 selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries)
 
-# --- 3. FETCHING LIVE OPTION CHAIN DATA FOR ACCURATE PCR CALCULATION ---
+# --- 3. FETCHING LIVE OPTION CHAIN DATA FOR PCR ---
 @st.cache_data(ttl=15)
 def get_live_option_chain_for_pcr(c_id, token, sec_id, seg, exp):
     if not c_id or not token:
@@ -118,14 +125,13 @@ def get_live_option_chain_for_pcr(c_id, token, sec_id, seg, exp):
         pass
     return pd.DataFrame(), 0.0
 
-# Execute fetch
 pcr_df, live_spot = get_live_option_chain_for_pcr(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry)
 
 spot_defaults = {"NIFTY": 24500.0, "BANKNIFTY": 50500.0, "FINNIFTY": 23200.0, "RELIANCE": 2950.0}
 if live_spot == 0.0:
-    live_spot = spot_defaults.get(selected_symbol, 24500.0)
+    live_spot = spot_defaults.get(selected_symbol, 50500.0 if selected_symbol=="BANKNIFTY" else 24500.0)
 
-# --- 4. PRECISE PCR & MAX PAIN CALCULATION ---
+# --- 4. PCR & MAX PAIN CALCULATION ---
 if not pcr_df.empty:
     total_ce_oi = pcr_df['CE_OI'].sum()
     total_pe_oi = pcr_df['PE_OI'].sum()
@@ -135,7 +141,6 @@ if not pcr_df.empty:
     total_pe_vol = pcr_df['PE_VOL'].sum()
     vol_pcr = round(total_pe_vol / total_ce_vol, 2) if total_ce_vol > 0 else 1.0
 
-    # Max Pain calculation logic
     strikes_list = pcr_df['STRIKE'].values
     min_pain = float('inf')
     max_pain_strike = strikes_list[0]
@@ -152,7 +157,6 @@ if not pcr_df.empty:
             min_pain = pain
             max_pain_strike = strike
 else:
-    # Fallback realistic calculations if API is offline
     oi_pcr = 1.12
     vol_pcr = 1.08
     step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
@@ -163,7 +167,7 @@ c1, c2, c3, c4 = st.columns(4)
 
 with c1:
     st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-    st.metric(label=f"Live Spot ({selected_symbol})", value=f"₹{live_spot:,.2f}", delta="Dhan Feed Active")
+    st.metric(label=f"Live Spot ({selected_symbol}) (ID: {resolved_sec_id})", value=f"₹{live_spot:,.2f}", delta="Dhan Feed Active")
     st.markdown("</div>", unsafe_allow_html=True)
 
 with c2:
@@ -184,32 +188,27 @@ with c4:
 
 st.markdown("---")
 
-# --- 6. ADVANCED INTRADAY PLOTLY DIVERGENCE CHART ---
+# --- 6. PLOTLY CHART ---
 st.markdown(f"### 📊 Multi-Dimensional Spot vs PCR Divergence Chart (`{selected_symbol})`")
 
 time_slots = ["09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "12:30", "01:00", "01:30", "02:00", "02:30", "03:00", "03:30"]
 np.random.seed(99)
 spot_path = [live_spot + np.random.normal(0, 15) for _ in time_slots]
-spot_path[-1] = live_spot # Anchor current live spot
+spot_path[-1] = live_spot
 
 oi_pcr_path = [round(oi_pcr + np.random.normal(0, 0.03), 2) for _ in time_slots]
 vol_pcr_path = [round(vol_pcr + np.random.normal(0, 0.04), 2) for _ in time_slots]
 
 fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-# Spot Price Trace
 fig.add_trace(
     go.Scatter(x=time_slots, y=spot_path, name=f"{selected_symbol} Spot", line=dict(color='#58a6ff', width=3)),
     secondary_y=False
 )
-
-# OI PCR Trace
 fig.add_trace(
     go.Scatter(x=time_slots, y=oi_pcr_path, name="OI PCR", line=dict(color='#2ea043', width=2)),
     secondary_y=True
 )
-
-# Volume PCR Trace
 fig.add_trace(
     go.Scatter(x=time_slots, y=vol_pcr_path, name="Volume PCR", line=dict(color='#f85149', width=2, dash='dot')),
     secondary_y=True
@@ -229,22 +228,3 @@ fig.update_yaxes(title_text=f"<b>Spot Price (₹)</b>", secondary_y=False)
 fig.update_yaxes(title_text="<b>Put-Call Ratio (PCR)</b>", secondary_y=True)
 
 st.plotly_chart(fig, use_container_width=True)
-
-# --- 7. QUANTITATIVE INTERPRETATION ---
-st.markdown("---")
-col_i1, col_i2 = st.columns(2)
-
-with col_i1:
-    st.markdown("### 🔍 Live Quantitative Bias")
-    if oi_pcr > 1.05:
-        st.success("🟢 **Bullish Institutional Bias:** Total Put OI exceeds Call OI. Option writers have massive support built on lower strikes.")
-    else:
-        st.error("🔴 **Bearish Institutional Bias:** Call writing dominance detected. Overhead resistance is heavy.")
-
-with col_i2:
-    st.markdown("### 🎯 Max Pain Expiry Magnet")
-    st.markdown(f"""
-    * **Current Spot:** ₹{live_spot:,.2f}
-    * **Max Pain Strike:** ₹{max_pain_strike:,.0f}
-    * **Execution Rule:** Price action tends to gravitate toward the Max Pain strike as option sellers protect their positions into the close.
-    """)
