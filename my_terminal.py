@@ -89,7 +89,7 @@ elif menu == "Option Chain":
     
     st.markdown(f"**Showing options chain heatmap for {symbol} (Expiry: {expiry})** — Dark red indicates heavy Call OI (Resistance), and dark green indicates heavy Put OI (Support).")
     
-    # Heatmap Styling Functions
+    # Heatmap Styling Functions (Updated to .map for Pandas compatibility)
     def color_call_oi(val):
         if val > 600000:
             return 'background-color: #ff4d4d; color: white; font-weight: bold;'
@@ -113,7 +113,9 @@ elif menu == "Option Chain":
         "Strike", 
         "PE_LTP", "PE_IV", "PE_Volume", "PE_Chg_OI", "PE_OI"
     ]
-    df_styled = df[columns_order].style.applymap(color_call_oi, subset=['CE_OI']).applymap(color_put_oi, subset=['PE_OI'])
+    
+    # यहाँ applymap की जगह map का उपयोग किया गया है
+    df_styled = df[columns_order].style.map(color_call_oi, subset=['CE_OI']).map(color_put_oi, subset=['PE_OI'])
     
     st.dataframe(df_styled, use_container_width=True, height=500)
 
@@ -136,7 +138,6 @@ elif menu == "PCR & Max Pain":
     st.markdown("---")
     st.subheader("📊 Strike-wise Call OI vs Put OI (Max Pain)")
     
-    # स्ट्राइक को फिक्स कैटेगरी बनाना ताकि ज़ूम करने पर स्ट्राइक हिले नहीं
     strike_str = df['Strike'].astype(str)
     
     fig_oi = go.Figure()
