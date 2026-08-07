@@ -63,3 +63,22 @@ st.plotly_chart(fig, use_container_width=True)
 
 st.markdown("---")
 st.dataframe(df_hist, use_container_width=True, height=350, hide_index=True)
+from utils import init_global_state, get_asset_details_from_master, fetch_live_expiries, get_available_symbols
+
+init_global_state()
+
+# यह अब मास्टर फाइल से दुनिया भर के सारे F&O/Equity स्टॉक्स अपने आप उठा लाएगा!
+all_symbols = get_available_symbols()
+
+selected_symbol = st.sidebar.selectbox(
+    "Select Underlying Asset", 
+    all_symbols,
+    index=all_symbols.index(st.session_state.global_symbol) if st.session_state.global_symbol in all_symbols else 0,
+    key="global_symbol_page"
+)
+st.session_state.global_symbol = selected_symbol
+
+# आगे का कोड वही रहेगा जो मास्टर आईडी और एक्सपायरी उठाता है
+resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
+expiries = fetch_live_expiries(client_id, access_token, resolved_sec_id, resolved_seg)
+selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries)
