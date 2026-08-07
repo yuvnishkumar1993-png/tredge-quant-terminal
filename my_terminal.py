@@ -1,13 +1,19 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import requests
 from datetime import datetime
 import plotly.graph_objects as go
 
+# Import official DhanHQ SDK
+try:
+    from dhanhq import dhanhq
+    DHAN_SDK_AVAILABLE = True
+except ImportError:
+    DHAN_SDK_AVAILABLE = False
+
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Quant Terminal Pro | Dhan Live Production",
+    page_title="Quant Terminal Pro | Dhan SDK Production",
     page_icon="⚡",
     layout="wide"
 )
@@ -22,62 +28,57 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Quant Trading Terminal Pro [Dhan Live API Engine]")
-st.markdown("Direct Live Connection via official **DhanHQ V2 Option Chain API** with Correct Security ID Mapping.")
+st.title("⚡ Quant Trading Terminal Pro [Dhan Official SDK Engine]")
+st.markdown("Connected via official **DhanHQ Python SDK** — Zero Security ID Errors & Direct Exchange Feed.")
 
 # ==========================================
 # 1. LIVE DHAN API CREDENTIALS & AUTHENTICATION
 # ==========================================
-st.sidebar.header("🔌 Dhan Live API Gateway")
+st.sidebar.header("🔌 Dhan SDK Gateway")
 client_id_input = st.sidebar.text_input("Dhan Client ID", value="")
 access_token_input = st.sidebar.text_input("Dhan Access Token", type="password", value="")
 
-# --- REAL DHAN OPTION CHAIN API PARSER (FIXED SECURITY ID) ---
-@st.cache_data(ttl=15)
-def fetch_real_dhan_option_chain(client_id, access_token, symbol="NIFTY", expiry_date=""):
+# --- OFFICIAL DHAN SDK OPTION CHAIN PARSER ---
+@st.cache_data(ttl=20)
+def fetch_dhan_sdk_option_chain(client_id, access_token, symbol="NIFTY"):
     if not client_id or not access_token:
         st.warning("⚠️ कृपया साइडबार में अपना वैध Dhan Client ID और Access Token दर्ज करें।")
         return pd.DataFrame(), 0.0
 
-    url = "https://api.dhan.co/v2/optionchain"
-    
-    # Corrected Dhan Underlying Security IDs and Segments mapping
-    # NIFTY = 13 (IDX_I), BANKNIFTY = 25 (IDX_I)
-    if symbol == "NIFTY":
-        security_id = 13
-        segment = "IDX_I"
-    elif symbol == "BANKNIFTY":
-        security_id = 25
-        segment = "IDX_I"
-    else:
-        security_id = 27
-        segment = "IDX_I"
-    
-    headers = {
-        "access-token": access_token.strip(),
-        "client-id": client_id.strip(),
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
-    
-    payload = {
-        "underlyingSecurityId": security_id,
-        "underlyingSegment": segment
-    }
-    
-    if expiry_date:
-        payload["expiry"] = expiry_date
+    if not DHAN_SDK_AVAILABLE:
+        st.error("❌ 'dhanhq' library is not installed in your environment. Run `pip install dhanhq` in your terminal.")
+        return pd.DataFrame(), 0.0
 
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        # Initialize official Dhan client
+        dhan = dhanhq(client_id.strip(), access_token.strip())
         
-        if response.status_code == 200:
-            res_json = response.json()
-            oc_data = res_json.get("data", {}).get("oc", {})
-            spot_price = float(res_json.get("data", {}).get("lastTradedPrice", 24850.0))
+        # Map underlying symbols to Dhan underlying security IDs & segments
+        # NIFTY = 13 (IDX_I), BANKNIFTY = 25 (IDX_I), FINNIFTY = 27 (IDX_I)
+        underlying_id = 13 if symbol == "NIFTY" else (25 if symbol == "BANKNIFTY" else 27)
+        
+        # 1. First fetch available expiries using official SDK method
+        exp_res = dhan.expiry_list(under_security_id=underlying_id, under_exchange_segment="IDX_I")
+        
+        target_expiry = None
+        if exp_res and "data" in exp_res and exp_res["data"]:
+            expiries = exp_res["data"]
+            if isinstance(expiries, list) and len(expiries) > 0:
+                target_expiry = expiries[0] # Pick nearest expiry
+                
+        if not target_expiry:
+            target_expiry = datetime.now().strftime("%Y-%m-%d")
+
+        # 2. Fetch option chain using official SDK method
+        oc_res = dhan.option_chain(under_security_id=underlying_id, under_exchange_segment="IDX_I", expiry=target_expiry)
+        
+        if oc_res and "data" in oc_res:
+            data_payload = oc_res["data"]
+            oc_data = data_payload.get("oc", {})
+            spot_price = float(data_payload.get("lastTradedPrice", 24850.0))
             
             if not oc_data:
-                st.error("⚠️ API कनेक्ट हो गई है लेकिन ऑप्शन चेन डेटा खाली मिला है। कृपया मार्केट ऑवर्स चेक करें।")
+                st.error("⚠️ Dhan SDK से कनेक्ट हो गया है लेकिन ऑप्शन चेन डेटा खाली मिला है।")
                 return pd.DataFrame(), 0.0
                 
             parsed_rows = []
@@ -105,13 +106,12 @@ def fetch_real_dhan_option_chain(client_id, access_token, symbol="NIFTY", expiry
             df_chain = pd.DataFrame(parsed_rows)
             df_chain = df_chain.sort_values(by="Strike").reset_index(drop=True)
             return df_chain, spot_price
-            
         else:
-            st.error(f"Dhan API HTTP Error {response.status_code}: {response.text}")
+            st.error(f"Dhan SDK Response Error: {oc_res}")
             return pd.DataFrame(), 0.0
             
     except Exception as e:
-        st.error(f"Failed to fetch live data from Dhan API: {e}")
+        st.error(f"Dhan SDK Execution Failed: {e}")
         return pd.DataFrame(), 0.0
 
 # --- SYSTEM NAVIGATION ---
@@ -137,10 +137,10 @@ strike_range_mode = st.sidebar.radio(
 )
 
 selected_symbol = st.selectbox("Underlying Symbol for Analysis", ["NIFTY", "BANKNIFTY", "FINNIFTY"], key="global_symbol")
-full_df, spot_price = fetch_real_dhan_option_chain(client_id_input, access_token_input, selected_symbol)
+full_df, spot_price = fetch_dhan_sdk_option_chain(client_id_input, access_token_input, selected_symbol)
 
 if full_df.empty:
-    st.info("💡 कृपया साइडबार में अपना **Dhan Client ID** और **Access Token** दर्ज करें।")
+    st.info("💡 कृपया साइडबार में अपना **Dhan Client ID** और **Access Token** दर्ज करें ताकि ऑफिशियल SDK के जरिए लाइव डेटा आ सके।")
     st.stop()
 
 # --- ACTIVE STRIKE FILTER ENGINE ---
@@ -190,7 +190,7 @@ max_pain, payout_df = calculate_max_pain(df, spot_price)
 if menu == "Live Dashboard":
     st.subheader("🚀 Dhan Live Market Overview & Pulse")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Spot Reference", f"₹{spot_price:,.2f}", "Live Exchange Feed")
+    c1.metric("Spot Reference", f"₹{spot_price:,.2f}", "Official SDK Feed")
     c2.metric("Market PCR (OI)", str(pcr_oi), "Accurate Calculation")
     c3.metric("Net Gamma State", "NEGATIVE", "Volatility Alert", delta_color="inverse")
     c4.metric("Max Pain Strike", f"₹{max_pain:,.0f}", "Writer Gravity Center")
@@ -246,6 +246,6 @@ elif menu == "Gamma, GEX & Walls":
 elif menu == "Institutional GEX Screener":
     st.subheader("🌐 Institutional GEX Screener Matrix")
     screener_df = pd.DataFrame([
-        {"Stock": selected_symbol, "Spot": f"₹{spot_price:,.2f}", "PCR": str(pcr_oi), "Max Pain": f"₹{max_pain:,.0f}", "Status": "Connected via Dhan API"}
+        {"Stock": selected_symbol, "Spot": f"₹{spot_price:,.2f}", "PCR": str(pcr_oi), "Max Pain": f"₹{max_pain:,.0f}", "Status": "Connected via Official Dhan SDK"}
     ])
     st.dataframe(screener_df, use_container_width=True, hide_index=True)
