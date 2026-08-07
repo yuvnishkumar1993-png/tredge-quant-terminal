@@ -10,7 +10,7 @@ st.set_page_config(page_title="Institutional Option Chain Desk", page_icon="⚡"
 st.markdown("## ⚡ Live DhanHQ Institutional Option Chain Desk")
 st.markdown("---")
 
-# --- 1. DYNAMIC CSV MASTER LOADER (Scrip ID & Segment Resolver) ---
+# --- 1. DYNAMIC CSV MASTER LOADER ---
 @st.cache_data(ttl=60)
 def load_dhan_master():
     possible_files = ["api-scrip-master.csv", "MW-All-Indices-08-Aug-2026.csv", "MW-FO-stock_fut-08-Aug-2026.csv"]
@@ -47,7 +47,7 @@ with col1:
     )
 
 with col2:
-    # Resolving Scrip ID and Segment from CSV Master
+    # Resolving Scrip ID and Segment safely
     resolved_sec_id = 13
     resolved_seg = "IDX_I"
     
@@ -59,8 +59,11 @@ with col2:
         if sym_col and id_col and seg_col:
             matched = df_master[df_master[sym_col].astype(str).str.contains(selected_symbol, na=False)]
             if not matched.empty:
-                resolved_sec_id = int(matched.iloc[0][id_col])
-                resolved_seg = str(matched.iloc[0][seg_col])
+                try:
+                    resolved_sec_id = int(matched.iloc[0][id_col])
+                    resolved_seg = str(matched.iloc[0][seg_col])
+                except:
+                    pass
 
     # Fetching Expiry List from Dhan API if authenticated
     expiries = ["2026-08-11", "2026-08-18", "2026-08-25"]
@@ -88,7 +91,7 @@ with col4:
 
 st.markdown("---")
 
-# --- 3. FETCHING OPTION CHAIN DATA FROM DHAN API OR FALLBACK ---
+# --- 3. FETCHING OPTION CHAIN DATA (WITH SAFE FALLBACK) ---
 @st.cache_data(ttl=15)
 def fetch_option_chain_data(c_id, token, sec_id, seg, exp):
     if not c_id or not token:
@@ -138,12 +141,12 @@ def fetch_option_chain_data(c_id, token, sec_id, seg, exp):
         pass
     return pd.DataFrame(), 0.0
 
-# Try fetching live data
-chain_df, api_spot = fetch_option_chain_data(client_id, access_token, resolved_sec_id, resolved_segment, selected_expiry)
+# Try fetching live data using resolved_seg
+chain_df, api_spot = fetch_option_chain_data(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry)
 if api_spot > 0:
     live_spot = api_spot
 
-# Fallback simulation if API returns empty (Market closed or weekend)
+# Fallback simulation if API returns empty
 if chain_df.empty:
     step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
     atm = round(live_spot / step) * step
@@ -166,7 +169,7 @@ if chain_df.empty:
             "PE OI (L)": round(np.random.uniform(20, 200), 2)
         })
     chain_df = pd.DataFrame(mock_recs)
-    st.info("ℹ️ **Safe-Mode Active:** लाइव मार्केट फीड उपलब्ध नहीं है (बाजार बंद है), अतः मानक सिमुलेटेड संरचना प्रदर्शित की जा रही है।")
+    st.info("ℹ️ **Safe-Mode Active:** लाइव मार्केट फीड उपलब्ध नहीं है, अतः मानक सिमुलेटेड संरचना प्रदर्शित की जा रही है।")
 
 # --- 4. STRIKE FILTER & DISPLAY ---
 chain_df['Dist'] = abs(chain_df['STRIKE'] - live_spot)
@@ -182,7 +185,9 @@ else:
 st.markdown(f"### 📊 Option Chain Matrix | Asset: `{selected_symbol}` (ID: `{resolved_sec_id}`) | Spot: `₹{live_spot:,.2f}`")
 
 def highlight_atm(row):
-    if row['STRIKE'] == round(live_spot / (100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50)) * (100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50):
+    step_val = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
+    atm_val = round(live_spot / step_val) * step_val
+    if row['STRIKE'] == atm_val:
         return ['background-color: #1f6feb; color: white; font-weight: bold;'] * len(row)
     return [''] * len(row)
 
