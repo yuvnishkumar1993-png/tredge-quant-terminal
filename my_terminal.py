@@ -23,32 +23,34 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚡ Quant Trading Terminal Pro [Dhan Direct API Engine]")
-st.markdown("Connected via **Direct DhanHQ REST API** — Zero SDK Errors & 100% Accurate Data Feed.")
+st.markdown("Connected via **Direct DhanHQ REST API** — Fully Customizable Security ID Gateway.")
 
 # ==========================================
-# 1. LIVE DHAN API CREDENTIALS
+# 1. LIVE DHAN API CREDENTIALS & SETTINGS
 # ==========================================
 st.sidebar.header("🔌 Dhan REST API Gateway")
 client_id_input = st.sidebar.text_input("Dhan Client ID", value="")
 access_token_input = st.sidebar.text_input("Dhan Access Token", type="password", value="")
 
-# --- DIRECT DHAN REST API PARSER (BUG FIXED) ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("⚙️ Advanced Security ID Settings")
+st.sidebar.info("💡 यदि डिफ़ॉल्ट ID पर एरर आए, तो यहाँ सही Security ID दर्ज करें (जैसे Nifty के लिए 13 या 1)।")
+
+# Auto-suggest security ID based on symbol selection
+selected_symbol = st.selectbox("Underlying Symbol for Analysis", ["NIFTY", "BANKNIFTY", "FINNIFTY"], key="global_symbol")
+
+default_sec_id = "13" if selected_symbol == "NIFTY" else ("25" if selected_symbol == "BANKNIFTY" else "27")
+custom_sec_id = st.sidebar.text_input("Security ID", value=default_sec_id)
+segment_choice = st.sidebar.selectbox("Exchange Segment", ["IDX_I", "IDX", "NSE", "NSE_FNO"])
+
+# --- DIRECT DHAN REST API PARSER ---
 @st.cache_data(ttl=15)
-def fetch_real_dhan_option_chain(client_id, access_token, symbol="NIFTY"):
+def fetch_real_dhan_option_chain(client_id, access_token, sec_id, segment):
     if not client_id or not access_token:
-        st.warning("⚠️ कृपया साइडबार में अपना वैध Dhan Client ID और Access Token दर्ज करें।")
         return pd.DataFrame(), 0.0
 
     url = "https://api.dhan.co/v2/optionchain"
     
-    # Correct Security IDs passed as STRINGS
-    if symbol == "NIFTY":
-        sec_id = "13"
-    elif symbol == "BANKNIFTY":
-        sec_id = "25"
-    else:
-        sec_id = "27"
-        
     headers = {
         "access-token": access_token.strip(),
         "client-id": client_id.strip(),
@@ -56,10 +58,9 @@ def fetch_real_dhan_option_chain(client_id, access_token, symbol="NIFTY"):
         "Accept": "application/json"
     }
     
-    # 100% Correct Payload mapped exactly to Dhan documentation
     payload = {
-        "underlyingSecurityId": sec_id,
-        "underlyingExchangeSegment": "IDX_I"
+        "underlyingSecurityId": str(sec_id).strip(),
+        "underlyingExchangeSegment": str(segment).strip()
     }
     
     try:
@@ -71,7 +72,6 @@ def fetch_real_dhan_option_chain(client_id, access_token, symbol="NIFTY"):
             spot_price = float(res_json.get("data", {}).get("lastTradedPrice", 0.0))
             
             if not oc_data:
-                st.error("⚠️ API से डेटा नहीं मिला। मार्केट बंद हो सकता है या एक्सपायरी डेटा जनरेट नहीं हुआ है।")
                 return pd.DataFrame(), spot_price
                 
             parsed_rows = []
@@ -131,11 +131,10 @@ strike_range_mode = st.sidebar.radio(
     index=1
 )
 
-selected_symbol = st.selectbox("Underlying Symbol for Analysis", ["NIFTY", "BANKNIFTY", "FINNIFTY"], key="global_symbol")
-full_df, spot_price = fetch_real_dhan_option_chain(client_id_input, access_token_input, selected_symbol)
+full_df, spot_price = fetch_real_dhan_option_chain(client_id_input, access_token_input, custom_sec_id, segment_choice)
 
 if full_df.empty:
-    st.info("💡 कृपया साइडबार में अपना **Dhan Client ID** और **Access Token** दर्ज करें ताकि लाइव डेटा आ सके।")
+    st.info("💡 कृपया साइडबार में अपना **Dhan Client ID**, **Access Token** दर्ज करें और यदि आवश्यक हो तो सही **Security ID** (जैसे Nifty के लिए 13 या BankNifty के लिए 25) व सेगमेंट चुनें।")
     st.stop()
 
 # --- ACTIVE STRIKE FILTER ENGINE ---
