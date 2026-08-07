@@ -4,7 +4,6 @@ import numpy as np
 import requests
 from datetime import datetime
 import plotly.graph_objects as go
-import plotly.express as px
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -25,7 +24,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<div class='terminal-header'><h1>⚡ QUANT TERMINAL PRO <span style='font-size: 16px; color: #8b949e;'>[UNIVERSAL GRAPHICAL SUITE v5.0]</span></h1></div>", unsafe_allow_html=True)
+st.markdown("<div class='terminal-header'><h1>⚡ QUANT TERMINAL PRO <span style='font-size: 16px; color: #8b949e;'>[UNIVERSAL GRAPHICAL SUITE v5.1]</span></h1></div>", unsafe_allow_html=True)
 
 # ==============================================================================
 # STEP 1: ENTERPRISE AUTHENTICATION GATEWAY
@@ -71,7 +70,7 @@ if not st.session_state.dhan_authenticated:
     st.stop()
 
 # ==============================================================================
-# STEP 2: MASTER SCRIP RESOLUTION (NSE, BSE, MCX ALL F&O INSTRUMENTS)
+# STEP 2: ONLINE DYNAMIC MASTER SCRIP LOADER (NO LOCAL FILE REQUIRED)
 # ==============================================================================
 st.sidebar.markdown("### 🟢 Session: ACTIVE")
 if st.sidebar.button("🔒 Terminate Session"):
@@ -95,19 +94,21 @@ menu = st.sidebar.selectbox(
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ Universal Scrip Selector")
 
-@st.cache_data
-def load_master_scrip_database():
+@st.cache_data(ttl=3600)
+def load_online_master_database():
     try:
-        df = pd.read_csv('api-scrip-master.csv', low_memory=False)
+        url = "https://images.dhan.co/api-data/api-scrip-master.csv"
+        df = pd.read_csv(url, low_memory=False)
         df.columns = [str(col).strip().upper() for col in df.columns]
         return df
-    except Exception:
+    except Exception as e:
         return pd.DataFrame()
 
-master_df = load_master_scrip_database()
+with st.spinner("Downloading and syncing Universal Scrip Master from Dhan cloud..."):
+    master_df = load_online_master_database()
 
 if master_df.empty:
-    st.error("⚠️ Master scrip file (`api-scrip-master.csv`) not found in workspace!")
+    st.error("⚠️ Failed to download Dhan Scrip Master database. Please check your internet connection.")
     st.stop()
 
 # Dynamically identify columns in scrip master
@@ -115,11 +116,10 @@ sym_col = next((c for c in master_df.columns if 'SYMBOL' in c or 'TRADING' in c)
 seg_col = next((c for c in master_df.columns if 'SEGMENT' in c or 'EXCH' in c), master_df.columns[0])
 id_col = next((c for c in master_df.columns if 'ID' in c), master_df.columns[0])
 
-# Filter all derivative and index segments: NSE_FNO, BSE_FNO, MCX_COMM, IDX_I
+# Filter derivative and index segments: NSE_FNO, BSE_FNO, MCX_COMM, IDX_I
 valid_segments = ['IDX_I', 'NSE_FNO', 'BSE_FNO', 'MCX_COMM']
 fno_master_df = master_df[master_df[seg_col].astype(str).str.upper().isin(valid_segments)].copy()
 
-# Asset Class Selector
 asset_class = st.sidebar.selectbox(
     "Select Asset Class",
     ["Major Indices (Nifty, BankNifty, Sensex)", "NSE F&O Stocks", "MCX Commodities (Gold, Crude, etc.)"]
@@ -143,7 +143,6 @@ if not symbol_choices:
 
 selected_symbol = st.sidebar.selectbox("Select Underlying Symbol", symbol_choices)
 
-# Match row in master dataframe
 matched_row = fno_master_df[fno_master_df[sym_col] == selected_symbol]
 if matched_row.empty:
     matched_row = fno_master_df[fno_master_df[sym_col].str.startswith(selected_symbol, na=False)]
@@ -354,7 +353,6 @@ if menu == "📊 Macro Pulse & Graphical Overview":
 
 elif menu == "📈 OI, Volume PCR & Price Relations":
     st.markdown(f"### 📈 Graphical Relationship: Price, OI PCR & Volume PCR — `{selected_symbol}`")
-    st.markdown("इस ग्राफ में आप स्पॉट प्राइस के आस-पास के स्ट्राइक्स पर ओपन इंटरेस्ट और वॉल्यूम के बीच का रिलेशन देख सकते हैं।")
     
     col_a, col_b, col_c = st.columns(3)
     col_a.metric("Spot Price", f"₹{spot_price:,.2f}")
@@ -363,7 +361,6 @@ elif menu == "📈 OI, Volume PCR & Price Relations":
     
     st.markdown("---")
     
-    # Graphical representation of OI Buildup (Change in OI) vs Strike
     fig_buildup = go.Figure()
     fig_buildup.add_trace(go.Bar(x=df['Strike'].astype(str), y=df['CE_Chg_OI'], name='Call Change in OI', marker_color='#e63946'))
     fig_buildup.add_trace(go.Bar(x=df['Strike'].astype(str), y=df['PE_Chg_OI'], name='Put Change in OI', marker_color='#2a9d8f'))
@@ -375,7 +372,6 @@ elif menu == "📈 OI, Volume PCR & Price Relations":
     )
     st.plotly_chart(fig_buildup, use_container_width=True)
     
-    # Volume Distribution Graph
     fig_vol = go.Figure()
     fig_vol.add_trace(go.Scatter(x=df['Strike'].astype(str), y=df['CE_Volume'], mode='lines+markers', name='Call Volume', line=dict(color='#ff6b6b', width=3)))
     fig_vol.add_trace(go.Scatter(x=df['Strike'].astype(str), y=df['PE_Volume'], mode='lines+markers', name='Put Volume', line=dict(color='#48cae4', width=3)))
