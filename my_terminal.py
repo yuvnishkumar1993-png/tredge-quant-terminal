@@ -2,12 +2,12 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 import plotly.graph_objects as go
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Quant Terminal Pro | Universal Dynamic F&O Engine",
+    page_title="Quant Terminal Pro | Proven Community Edition",
     page_icon="⚡",
     layout="wide"
 )
@@ -22,11 +22,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Quant Trading Terminal Pro [Universal Dynamic F&O Engine]")
-st.markdown("Institutional Suite — Dynamic Index & Stock Derivatives Screener with Auto-Scrip Resolution")
+st.title("⚡ Quant Trading Terminal Pro [Proven Community Engine]")
+st.markdown("Clean, Direct & Proven DhanHQ Option Chain Interface — Zero Complex Dependencies")
 
 # ==============================================================================
-# STEP 1: SECURE API AUTHENTICATION GATEWAY
+# STEP 1: LOGIN & AUTHENTICATION GATEWAY
 # ==============================================================================
 if "dhan_authenticated" not in st.session_state:
     st.session_state.dhan_authenticated = False
@@ -37,154 +37,74 @@ if not st.session_state.dhan_authenticated:
     st.markdown("---")
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("### 🔐 Broker API Access Gateway")
-        st.markdown("Authenticate with your active **DhanHQ API Credentials** to initialize the terminal session.")
+        st.markdown("### 🔐 Dhan API Login")
+        st.markdown("Enter your credentials to access the terminal.")
         
-        with st.form("auth_form"):
-            input_client_id = st.text_input("Dhan Client ID / User ID", value="")
-            input_access_token = st.text_input("Dhan Access Token (JWT)", type="password", value="")
-            submit_auth = st.form_submit_button("Verify & Initialize Terminal Session")
+        with st.form("login_form"):
+            c_id = st.text_input("Dhan Client ID", value="")
+            a_token = st.text_input("Dhan Access Token", type="password", value="")
+            submitted = st.form_submit_button("Connect Terminal")
             
-            if submit_auth:
-                if input_client_id and input_access_token:
+            if submitted:
+                if c_id and a_token:
+                    # Quick validation check
                     test_url = "https://api.dhan.co/v2/optionchain"
-                    test_headers = {
-                        "access-token": input_access_token.strip(),
-                        "client-id": input_client_id.strip(),
-                        "Content-Type": "application/json",
-                        "Accept": "application/json"
-                    }
-                    test_payload = {
-                        "underlyingSecurityId": "13",
-                        "underlyingExchangeSegment": "IDX_I",
-                        "expiry": datetime.now().strftime("%Y-%m-%d")
-                    }
+                    headers = {"access-token": a_token.strip(), "client-id": c_id.strip(), "Content-Type": "application/json"}
+                    payload = {"underlyingSecurityId": 13, "underlyingExchangeSegment": "IDX_I", "expiry": datetime.now().strftime("%Y-%m-%d")}
                     try:
-                        res = requests.post(test_url, json=test_payload, headers=test_headers, timeout=8)
+                        res = requests.post(test_url, json=payload, headers=headers, timeout=5)
                         if res.status_code in [200, 400]:
                             st.session_state.dhan_authenticated = True
-                            st.session_state.client_id = input_client_id.strip()
-                            st.session_state.access_token = input_access_token.strip()
-                            st.success("✅ Authentication successful! Loading universal instruments...")
+                            st.session_state.client_id = c_id.strip()
+                            st.session_state.access_token = a_token.strip()
+                            st.success("Connected successfully!")
                             st.rerun()
                         else:
-                            st.error(f"❌ Authentication Failed. HTTP Status: {res.status_code}")
-                    except Exception as ex:
-                        st.error(f"Connection Error: {ex}")
+                            st.error(f"Login failed. Status Code: {res.status_code}")
+                    except Exception as e:
+                        st.error(f"Network error: {e}")
                 else:
-                    st.warning("⚠️ Please provide both Client ID and Access Token.")
+                    st.warning("Please fill in both fields.")
     st.stop()
 
 # ==============================================================================
-# STEP 2: ROBUST DYNAMIC SCRIP MASTER LOADER
+# STEP 2: SIDEBAR & CONTROLS
 # ==============================================================================
-st.sidebar.success("🟢 API Session Active")
-if st.sidebar.button("🔒 Disconnect / Logout"):
+st.sidebar.success("🟢 Connected to Dhan")
+if st.sidebar.button("Logout"):
     st.session_state.dhan_authenticated = False
     st.rerun()
 
 st.sidebar.markdown("---")
-st.sidebar.header("📊 Terminal Navigation")
-menu = st.sidebar.selectbox(
-    "Select Analytics Module",
-    [
-        "Live Dashboard", 
-        "Option Chain Matrix", 
-        "PCR & Max Pain Analytics", 
-        "Gamma, GEX & Walls", 
-        "Institutional Screener"
-    ]
-)
+st.sidebar.header("📊 Navigation")
+menu = st.sidebar.selectbox("Select Module", ["Live Dashboard", "Option Chain Matrix", "PCR & Max Pain", "Gamma Walls"])
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("⚙️ Universal Derivative Selector")
+st.sidebar.subheader("⚙️ Market Parameters")
 
-@st.cache_data(ttl=3600)
-def load_dhan_scrip_master():
-    try:
-        url = "https://images.dhan.co/api-data/api-scrip-master.csv"
-        df = pd.read_csv(url, low_memory=False)
-        df.columns = [str(col).strip().upper() for col in df.columns]
-        return df
-    except Exception:
-        return pd.DataFrame()
-
-with st.spinner("Syncing Universal F&O Master Database from Exchange..."):
-    master_df = load_dhan_scrip_master()
-
-# Fallback Registry if master fails to load or columns vary
-fallback_registry = {
-    "NIFTY": {"sec_id": "13", "segment": "IDX_I"},
-    "BANKNIFTY": {"sec_id": "25", "segment": "IDX_I"},
-    "FINNIFTY": {"sec_id": "27", "segment": "IDX_I"},
-    "MIDCPNIFTY": {"sec_id": "28", "segment": "IDX_I"},
-    "SENSEX": {"sec_id": "51", "segment": "IDX_I"},
-    "RELIANCE": {"sec_id": "2885", "segment": "NSE_FNO"},
-    "TCS": {"sec_id": "11483", "segment": "NSE_FNO"},
-    "INFY": {"sec_id": "1594", "segment": "NSE_FNO"},
-    "HDFCBANK": {"sec_id": "1333", "segment": "NSE_FNO"},
-    "ICICIBANK": {"sec_id": "4963", "segment": "NSE_FNO"}
+# Standard Index mapping used by all traders
+index_map = {
+    "NIFTY": {"id": 13, "segment": "IDX_I"},
+    "BANKNIFTY": {"id": 25, "segment": "IDX_I"},
+    "FINNIFTY": {"id": 27, "segment": "IDX_I"}
 }
 
-if not master_df.empty:
-    # Dynamically detect columns
-    seg_col = next((c for c in master_df.columns if 'SEGMENT' in c or 'EXCH' in c), None)
-    sym_col = next((c for c in master_df.columns if 'TRADING_SYMBOL' in c or 'SYMBOL' in c), None)
-    id_col = next((c for c in master_df.columns if 'SECURITY_ID' in c or ('ID' in c and 'SMST' in c)), master_df.columns[0])
-    
-    if seg_col and sym_col and id_col:
-        fno_df = master_df[master_df[seg_col].astype(str).str.upper().isin(['IDX_I', 'NSE_FNO'])].copy()
-        unique_syms = sorted(fno_df[sym_col].dropna().unique().tolist())
-        symbol_choices = [s for s in unique_syms if len(str(s)) < 15 and not str(s).endswith(('CE', 'PE', 'FUT'))]
-        if not symbol_choices:
-            symbol_choices = list(fallback_registry.keys())
-    else:
-        symbol_choices = list(fallback_registry.keys())
-else:
-    symbol_choices = list(fallback_registry.keys())
+selected_index = st.sidebar.selectbox("Select Index", list(index_map.keys()))
+sec_id = index_map[selected_index]["id"]
+segment = index_map[selected_index]["segment"]
 
-selected_symbol = st.sidebar.selectbox("Select Underlying Symbol", symbol_choices)
-
-# Resolve Security ID & Segment Dynamically
-if not master_df.empty and seg_col and sym_col and id_col:
-    matched = fno_df[fno_df[sym_col] == selected_symbol]
-    if matched.empty:
-        matched = fno_df[fno_df[sym_col].str.startswith(selected_symbol, na=False)]
-    if not matched.empty:
-        current_sec_id = str(matched.iloc[0][id_col])
-        current_segment = str(matched.iloc[0][seg_col])
-    else:
-        current_sec_id = fallback_registry.get(selected_symbol, {"sec_id": "13"})["sec_id"]
-        current_segment = fallback_registry.get(selected_symbol, {"segment": "IDX_I"})["segment"]
-else:
-    current_sec_id = fallback_registry.get(selected_symbol, {"sec_id": "13"})["sec_id"]
-    current_segment = fallback_registry.get(selected_symbol, {"segment": "IDX_I"})["segment"]
-
-# Dynamic Expiry Generator
-def get_dynamic_expiries(symbol):
-    today = datetime.now().date()
-    target_weekday = 1 if symbol in ["NIFTY", "FINNIFTY", "MIDCPNIFTY"] else 3
-    dates = []
-    for i in range(45):
-        d = today + timedelta(days=i)
-        if d.weekday() == target_weekday:
-            dates.append(d.strftime("%Y-%m-%d"))
-    return dates
-
-expiry_list = get_dynamic_expiries(selected_symbol)
-selected_expiry = st.sidebar.selectbox("Select Active Expiry Contract", expiry_list)
-
-strike_range_mode = st.sidebar.radio(
-    "Strike Span Range", 
-    ["±10 Active Strikes", "±25 Active Strikes", "Full Chain"],
-    index=1
-)
+# Native Streamlit Date Picker so you can select the exact trading expiry date visible on Dhan/NSE
+expiry_date = st.sidebar.date_input("Select Expiry Date", value=datetime.now())
+expiry_str = expiry_date.strftime("%Y-%m-%d")
 
 st.sidebar.markdown("---")
-refresh_data = st.sidebar.button("🔄 Refresh Market Data")
+fetch_btn = st.sidebar.button("🔄 Fetch Live Chain")
 
-# --- SECURED DYNAMIC DATA FETCHING ENGINE ---
-def fetch_universal_option_chain(client_id, access_token, sec_id, segment, expiry):
+# ==============================================================================
+# STEP 3: DATA FETCHING ENGINE
+# ==============================================================================
+@st.cache_data(ttl=15)
+def get_option_chain_data(client_id, access_token, security_id, seg, exp):
     url = "https://api.dhan.co/v2/optionchain"
     headers = {
         "access-token": access_token,
@@ -193,30 +113,28 @@ def fetch_universal_option_chain(client_id, access_token, sec_id, segment, expir
         "Accept": "application/json"
     }
     payload = {
-        "underlyingSecurityId": str(sec_id).strip(),
-        "underlyingExchangeSegment": str(segment).strip(),
-        "expiry": str(expiry).strip()
+        "underlyingSecurityId": security_id,
+        "underlyingExchangeSegment": seg,
+        "expiry": exp
     }
     
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=12)
-        
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
         if response.status_code == 200:
-            res_json = response.json()
-            oc_data = res_json.get("data", {}).get("oc", {})
-            spot_price = float(res_json.get("data", {}).get("lastTradedPrice", 0.0))
+            res = response.json()
+            oc = res.get("data", {}).get("oc", {})
+            spot = float(res.get("data", {}).get("lastTradedPrice", 0.0))
             
-            if not oc_data:
-                return pd.DataFrame(), spot_price
+            if not oc:
+                return pd.DataFrame(), spot
                 
             rows = []
-            for strike_str, strike_obj in oc_data.items():
-                s_val = float(strike_str)
-                ce = strike_obj.get("ce", {})
-                pe = strike_obj.get("pe", {})
-                
+            for strike_str, obj in oc.items():
+                strike = float(strike_str)
+                ce = obj.get("ce", {})
+                pe = obj.get("pe", {})
                 rows.append({
-                    "Strike": int(s_val),
+                    "Strike": int(strike),
                     "CE_OI": int(ce.get("openInterest", 0)),
                     "CE_Chg_OI": int(ce.get("changeInOpenInterest", 0)),
                     "CE_Volume": int(ce.get("volume", 0)),
@@ -233,154 +151,92 @@ def fetch_universal_option_chain(client_id, access_token, sec_id, segment, expir
             df = pd.DataFrame(rows)
             if not df.empty:
                 df = df.sort_values(by="Strike").reset_index(drop=True)
-            return df, spot_price
-            
-        elif response.status_code == 429:
-            st.warning("⚠️ **Rate Limit (429):** Too many requests. Please wait 30 seconds and hit 'Refresh Market Data'.")
-            return pd.DataFrame(), 0.0
+            return df, spot
         else:
             st.error(f"API Error [{response.status_code}]: {response.text}")
             return pd.DataFrame(), 0.0
-            
     except Exception as e:
-        st.error(f"Execution Error: {e}")
+        st.error(f"Error: {e}")
         return pd.DataFrame(), 0.0
 
-if "cached_df" not in st.session_state or refresh_data:
-    with st.spinner(f"Fetching live derivative chain for {selected_symbol} (ID: {current_sec_id})..."):
-        df_res, spot_res = fetch_universal_option_chain(
+if "df_cache" not in st.session_state or fetch_btn:
+    with st.spinner("Fetching data from Dhan..."):
+        df_res, spot_res = get_option_chain_data(
             st.session_state.client_id, 
             st.session_state.access_token, 
-            current_sec_id, 
-            current_segment, 
-            selected_expiry
+            sec_id, 
+            segment, 
+            expiry_str
         )
-        st.session_state.cached_df = df_res
-        st.session_state.cached_spot = spot_res
+        st.session_state.df_cache = df_res
+        st.session_state.spot_cache = spot_res
 
-full_df = st.session_state.cached_df
-spot_price = st.session_state.cached_spot
+df = st.session_state.df_cache
+spot = st.session_state.spot_cache
 
-if full_df.empty:
-    st.info("💡 इस कॉन्ट्रैक्ट या एक्सपायरी के लिए लाइव डेटा उपलब्ध नहीं है (या बाजार बंद है)। कृपया सही एक्सपायरी चुनें और **Refresh Market Data** दबाएं।")
+if df.empty:
+    st.info("💡 डेटा नहीं मिला। कृपया सुनिश्चित करें कि बाजार खुला है और चुनी गई एक्सपायरी डेट बिल्कुल सही (जो वर्किंग ट्रेडिंग डे हो) है। फिर 'Fetch Live Chain' पर क्लिक करें।")
     st.stop()
 
-# --- ACTIVE STRIKE FILTER ---
-def filter_strikes(df, mode):
-    if df.empty or 'Strike' not in df.columns:
-        return df
-    df['Activity'] = df['CE_OI'] + df['PE_OI']
-    idx = df['Activity'].idxmax()
-    if "±10" in mode:
-        return df.iloc[max(0, idx - 10): min(len(df), idx + 11)]
-    elif "±25" in mode:
-        return df.iloc[max(0, idx - 25): min(len(df), idx + 26)]
-    else:
-        return df
+# --- CALCULATIONS (PCR & MAX PAIN) ---
+tot_ce_oi = df['CE_OI'].sum()
+tot_pe_oi = df['PE_OI'].sum()
+pcr = round(tot_pe_oi / tot_ce_oi, 2) if tot_ce_oi > 0 else 0
 
-df = filter_strikes(full_df, strike_range_mode)
+strikes = df['Strike'].values
+ce_vals = df['CE_OI'].values
+pe_vals = df['PE_OI'].values
 
-# --- ANALYTICS CALCULATIONS ---
-def compute_analytics(dataframe, spot):
-    if dataframe.empty:
-        return 0, 0, spot, pd.DataFrame()
-    tot_ce = dataframe['CE_OI'].sum()
-    tot_pe = dataframe['PE_OI'].sum()
-    pcr = round(tot_pe / tot_ce, 2) if tot_ce > 0 else 0
-    
-    strikes = dataframe['Strike'].values
-    ce_oi = dataframe['CE_OI'].values
-    pe_oi = dataframe['PE_OI'].values
-    
-    payouts = []
-    min_payout = float('inf')
-    max_pain = strikes[0]
-    
-    for s in strikes:
-        c_pay = np.sum(np.maximum(0, s - strikes) * ce_oi)
-        p_pay = np.sum(np.maximum(0, strikes - s) * pe_oi)
-        total = c_pay + p_pay
-        payouts.append({"Strike": s, "Total_Payout": total})
-        if total < min_payout:
-            min_payout = total
-            max_pain = s
-            
-    return pcr, tot_ce, max_pain, pd.DataFrame(payouts)
+max_pain = strikes[0]
+min_loss = float('inf')
+payout_list = []
 
-pcr_val, total_ce_sum, max_pain_strike, payout_table = compute_analytics(df, spot_price)
+for s in strikes:
+    c_loss = np.sum(np.maximum(0, s - strikes) * ce_vals)
+    p_loss = np.sum(np.maximum(0, strikes - s) * pe_vals)
+    total_loss = c_loss + p_loss
+    payout_list.append({"Strike": s, "Payout": total_loss})
+    if total_loss < min_loss:
+        min_loss = total_loss
+        max_pain = s
+
+payout_df = pd.DataFrame(payout_list)
 
 # ==============================================================================
-# STEP 3: MODULAR ANALYTICS VIEWS
+# STEP 4: VIEWS DISPLAY
 # ==============================================================================
 if menu == "Live Dashboard":
-    st.subheader(f"🚀 Live Derivative Pulse — {selected_symbol} ({selected_expiry})")
-    bias = "🟢 PUT WRITERS / BULLISH SUPPORT DOMINANT" if pcr_val > 1.05 else "🔴 CALL WRITERS / BEARISH RESISTANCE DOMINANT"
-    st.info(f"**Institutional Signal:** {bias}")
-    
+    st.subheader(f"📊 Live Overview — {selected_index} ({expiry_str})")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Spot Reference", f"₹{spot_price:,.2f}", f"ID: {current_sec_id}")
-    c2.metric("Market PCR (OI)", str(pcr_val), "Accurate Ratio")
-    c3.metric("Total Call OI", f"{total_ce_sum:,}", "Open Interest")
-    c4.metric("Max Pain Strike", f"₹{max_pain_strike:,.0f}", "Gravity Center")
+    c1.metric("Spot Price", f"₹{spot:,.2f}")
+    c2.metric("Put-Call Ratio (PCR)", str(pcr))
+    c3.metric("Total Call OI", f"{tot_ce_oi:,}")
+    c4.metric("Max Pain Strike", f"₹{max_pain:,.0f}")
 
 elif menu == "Option Chain Matrix":
-    st.subheader(f"⛓️ Professional Option Chain Matrix — {selected_symbol}")
-    bias_txt = "🟢 Support Strong (Put Writers Active)" if pcr_val > 1.05 else "🔴 Resistance Strong (Call Writers Active)"
-    st.markdown(f"**Bias:** {bias_txt} | **Spot:** ₹{spot_price:,.2f}")
-    
-    display_cols = [
-        "CE_OI", "CE_Chg_OI", "CE_Volume", "CE_IV", "CE_LTP", 
-        "Strike", 
-        "PE_LTP", "PE_IV", "PE_Volume", "PE_Chg_OI", "PE_OI"
-    ]
-    matrix_df = df[display_cols]
-    
-    def style_matrix(row):
-        if 'CE_OI' in row and row['CE_OI'] > 2500000: return ['background-color: #3d1c1c; color: #ff9999; font-weight: bold;'] * len(row)
-        if 'PE_OI' in row and row['PE_OI'] > 2500000: return ['background-color: #1c3d28; color: #99ffbb; font-weight: bold;'] * len(row)
-        return ['color: inherit;'] * len(row)
+    st.subheader(f"⛓️ Option Chain Matrix — {selected_index}")
+    cols = ["CE_OI", "CE_Chg_OI", "CE_Volume", "CE_IV", "CE_LTP", "Strike", "PE_LTP", "PE_IV", "PE_Volume", "PE_Chg_OI", "PE_OI"]
+    st.dataframe(df[cols], use_container_width=True, height=600)
 
-    st.dataframe(matrix_df.style.apply(style_matrix, axis=1), use_container_width=True, height=600)
-
-elif menu == "PCR & Max Pain Analytics":
-    st.subheader("📊 Advanced PCR & Max Pain Intelligence")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("PCR Ratio", str(pcr_val), "Bullish/Bearish Balance")
-    col2.metric("Max Pain", f"₹{max_pain_strike:,.0f}", "Settlement Center")
-    col3.metric("Spot Price", f"₹{spot_price:,.2f}")
+elif menu == "PCR & Max Pain":
+    st.subheader("📈 Max Pain & Payout Chart")
+    col1, col2 = st.columns(2)
+    col1.metric("Calculated Max Pain", f"₹{max_pain:,.0f}")
+    col2.metric("Market PCR", str(pcr))
     
-    st.markdown("---")
-    if not payout_table.empty:
+    if not payout_df.empty:
         fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=payout_table['Strike'].astype(str), y=payout_table['Total_Payout'], 
-            mode='lines+markers', name='Payout Exposure',
-            line=dict(color='#636efa', width=3), fill='tozeroy'
-        ))
-        fig.update_layout(template="plotly_dark", xaxis=dict(type='category', title="Strike Price"), yaxis_title="Payout (₹)")
+        fig.add_trace(go.Scatter(x=payout_df['Strike'].astype(str), y=payout_df['Payout'], mode='lines+markers', line=dict(color='#00cc96', width=3)))
+        fig.update_layout(template="plotly_dark", xaxis=dict(type='category', title="Strike Price"), yaxis_title="Total Settlement Loss")
         st.plotly_chart(fig, use_container_width=True)
 
-elif menu == "Gamma, GEX & Walls":
-    st.subheader("⚡ Institutional Gamma Exposure (GEX) & Walls")
+elif menu == "Gamma Walls":
+    st.subheader("⚡ Gamma Exposure Walls")
     df['CE_GEX'] = df['CE_OI'] * df['CE_Gamma'] * -100
     df['PE_GEX'] = df['PE_OI'] * df['PE_Gamma'] * 100
     
-    strike_labels = df['Strike'].astype(str)
     fig_gex = go.Figure()
-    fig_gex.add_trace(go.Bar(x=strike_labels, y=df['CE_GEX'], name='Call Wall (Resistance)', marker_color='#ff4b4b'))
-    fig_gex.add_trace(go.Bar(x=strike_labels, y=df['PE_GEX'], name='Put Wall (Support)', marker_color='#00cc96'))
-    fig_gex.update_layout(barmode='relative', template="plotly_dark", xaxis=dict(type='category', title="Strike Price"))
+    fig_gex.add_trace(go.Bar(x=df['Strike'].astype(str), y=df['CE_GEX'], name='Call Wall', marker_color='#ff4b4b'))
+    fig_gex.add_trace(go.Bar(x=df['Strike'].astype(str), y=df['PE_GEX'], name='Put Wall', marker_color='#00cc96'))
+    fig_gex.update_layout(barmode='relative', template="plotly_dark", xaxis=dict(type='category', title="Strike"))
     st.plotly_chart(fig_gex, use_container_width=True)
-
-elif menu == "Institutional Screener":
-    st.subheader("🌐 Universal F&O Screener Matrix")
-    summary_df = pd.DataFrame([{
-        "Asset": selected_symbol,
-        "Segment": current_segment,
-        "Security ID": current_sec_id,
-        "Spot Price": f"₹{spot_price:,.2f}",
-        "PCR": pcr_val,
-        "Max Pain": f"₹{max_pain_strike:,.0f}",
-        "Status": "Stable & Authenticated"
-    }])
-    st.dataframe(summary_df, use_container_width=True, hide_index=True)
