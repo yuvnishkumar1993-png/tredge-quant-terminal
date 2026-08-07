@@ -194,14 +194,13 @@ elif menu == "Gamma, GEX & Walls":
     st.subheader("⚡ Advanced Gamma Walls, GEX & Gamma Flip Analysis")
     
     col1, col2 = st.columns(2)
-    symbol = col1.selectbox("Symbol for GEX", ["NIFTY", "BANKNIFTY", "RELIANCE"])
-    expiry = col2.selectbox("Expiry Date", ["2026-06-11", "2026-06-18", "2026-06-25"])
+    symbol = col1.selectbox("Symbol for GEX", ["NIFTY", "BANKNIFTY", "RELIANCE"], key="gex_sym")
+    expiry = col2.selectbox("Expiry Date", ["2026-06-11", "2026-06-18", "2026-06-25"], key="gex_exp")
     
     df = get_comprehensive_option_chain(symbol)
     strike_str = df['Strike'].astype(str)
     
-    # Simulate Call GEX and Put GEX per strike
-    ce_gex = df['CE_OI'] * df['CE_Gamma'] * 100 * (-1) # Dealer short gamma on calls typically
+    ce_gex = df['CE_OI'] * df['CE_Gamma'] * 100 * (-1)
     pe_gex = df['PE_OI'] * df['PE_Gamma'] * 100
     
     st.markdown("### 🏛️ Call Wall & Put Wall (Gamma Exposure)")
@@ -209,9 +208,8 @@ elif menu == "Gamma, GEX & Walls":
     fig_gex.add_trace(go.Bar(x=strike_str, y=ce_gex, name='Call GEX (Resistance Wall)', marker_color='crimson'))
     fig_gex.add_trace(go.Bar(x=strike_str, y=pe_gex, name='Put GEX (Support Wall)', marker_color='seagreen'))
     
-    # Gamma Flip Line Simulation
-    flip_strike = strikes_arr = df['Strike'].values[len(df)//2]
-    fig_gex.add_vline(x=str(flip_strike), line_dash="dash", line_color="darkorange", annotation_text="Gamma Flip Level", annotation_position="top right")
+    flip_strike = str(df['Strike'].values[len(df)//2])
+    fig_gex.add_shape(type="line", x0=flip_strike, x1=flip_strike, y0=0, y1=1, yref="paper", line=dict(color="darkorange", width=2, dash="dash"))
     
     fig_gex.update_layout(
         barmode='relative',
@@ -259,11 +257,9 @@ elif menu == "Historical Time-Travel":
     
     st.info(f"Showing historical snapshot for **{sym_hist}** on **{exp_hist}** at **{time_travel}**")
     
-    # Generate historical variation based on selected time
     df_hist = get_comprehensive_option_chain(sym_hist)
     strike_str_h = df_hist['Strike'].astype(str)
     
-    # Historical Max Pain Calculation
     hist_max_pain = df_hist.loc[df_hist['CE_OI'].idxmax(), 'Strike']
     
     m1, m2 = st.columns(2)
@@ -273,7 +269,11 @@ elif menu == "Historical Time-Travel":
     fig_hist = go.Figure()
     fig_hist.add_trace(go.Bar(x=strike_str_h, y=df_hist['CE_OI'], name=f'Call OI ({time_travel})', marker_color='#ff6666'))
     fig_hist.add_trace(go.Bar(x=strike_str_h, y=df_hist['PE_OI'], name=f'Put OI ({time_travel})', marker_color='#33cc66'))
-    fig_hist.add_vline(x=str(hist_max_pain), line_dash="dash", line_color="purple", annotation_text=f"Max Pain: {hist_max_pain}", annotation_position="top left")
+    
+    # सुरक्षित तरीके से वर्टिकल लाइन जोड़ना
+    max_pain_str = str(hist_max_pain)
+    if max_pain_str in list(strike_str_h):
+        fig_hist.add_shape(type="line", x0=max_pain_str, x1=max_pain_str, y0=0, y1=1, yref="paper", line=dict(color="purple", width=2, dash="dash"))
     
     fig_hist.update_layout(
         barmode='group',
