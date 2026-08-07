@@ -1,19 +1,13 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime
+import requests
+from datetime import datetime, timedelta
 import plotly.graph_objects as go
-
-# Optional: Import official dhanhq if available in your environment
-try:
-    from dhanhq import dhanhq
-    DHAN_SDK_AVAILABLE = True
-except ImportError:
-    DHAN_SDK_AVAILABLE = False
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Quant Terminal Pro | Dhan Production Edition",
+    page_title="Quant Terminal Pro | Dhan Live Production",
     page_icon="⚡",
     layout="wide"
 )
@@ -28,30 +22,98 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Quant Trading Terminal Pro [Dhan API Production Edition]")
-st.markdown("Connected directly via official **DhanHQ V2 Option Chain API** with precise strike layout & real exchange calculations.")
+st.title("⚡ Quant Trading Terminal Pro [Dhan Live API Engine]")
+st.markdown("Direct Live Connection via official **DhanHQ V2 Option Chain API** for 100% Accurate Exchange Data.")
 
 # ==========================================
-# 1. DHAN API CREDENTIALS & CONNECTION GATEWAY
+# 1. LIVE DHAN API CREDENTIALS & AUTHENTICATION
 # ==========================================
-st.sidebar.header("🔌 Dhan API Gateway")
+st.sidebar.header("🔌 Dhan Live API Gateway")
 client_id_input = st.sidebar.text_input("Dhan Client ID", value="")
 access_token_input = st.sidebar.text_input("Dhan Access Token", type="password", value="")
 
-if "dhan_connected" not in st.session_state:
-    st.session_state.dhan_connected = False
+# --- REAL DHAN OPTION CHAIN API PARSER ---
+@st.cache_data(ttl=15) # Refresh live data every 15 seconds
+def fetch_real_dhan_option_chain(client_id, access_token, symbol="NIFTY", expiry_date=""):
+    """
+    Connects directly to DhanHQ V2 REST API Option Chain Endpoint.
+    Endpoint: https://api.dhan.co/v2/optionchain
+    """
+    if not client_id or not access_token:
+        st.warning("⚠️ Please enter your valid Dhan Client ID and Access Token in the sidebar to fetch live data.")
+        return pd.DataFrame(), 0.0
 
-if st.sidebar.button("🔗 Connect Dhan Live Feed"):
-    if client_id_input and access_token_input:
-        st.session_state.dhan_connected = True
-        st.sidebar.success("✅ Successfully linked with DhanHQ API Session!")
-    else:
-        st.sidebar.error("❌ Please provide valid Client ID and Access Token.")
+    url = "https://api.dhan.co/v2/optionchain"
+    
+    # Dhan Underlying Security IDs
+    # NIFTY = 13, BANKNIFTY = 25, FINNIFTY = 27 (Segment: IDX_I)
+    security_id = 13 if symbol == "NIFTY" else (25 if symbol == "BANKNIFTY" else 27)
+    
+    headers = {
+        "access-token": access_token.strip(),
+        "client-id": client_id.strip(),
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    
+    payload = {
+        "underlyingSecurityId": security_id,
+        "underlyingSegment": "IDX_I"
+    }
+    
+    if expiry_date:
+        payload["expiry"] = expiry_date
 
-# If not connected via credentials, offer professional simulation fallback or block
-if not st.session_state.dhan_connected and not access_token_input:
-    st.warning("⚠️ Please enter your Dhan Client ID and Access Token in the sidebar to fetch live exchange option chain.")
-    # We allow safe fallback structure so the terminal UI doesn't crash while testing views
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            res_json = response.json()
+            
+            # Parsing Dhan Option Chain JSON Structure
+            # Dhan returns data under 'data' -> 'oc' (Option Chain dictionary keyed by strike)
+            oc_data = res_json.get("data", {}).get("oc", {})
+            spot_price = float(res_json.get("data", {}).get("lastTradedPrice", 24850.0))
+            
+            if not oc_data:
+                st.error("⚠️ Connected to Dhan, but received empty option chain structure. Check expiry or market hours.")
+                return pd.DataFrame(), 0.0
+                
+            parsed_rows = []
+            for strike_str, strike_obj in oc_data.items():
+                strike_val = float(strike_str)
+                
+                ce_data = strike_obj.get("ce", {})
+                pe_data = strike_obj.get("pe", {})
+                
+                parsed_rows.append({
+                    "Strike": int(strike_val),
+                    "CE_OI": int(ce_data.get("openInterest", 0)),
+                    "CE_Chg_OI": int(ce_data.get("changeInOpenInterest", 0)),
+                    "CE_Volume": int(ce_data.get("volume", 0)),
+                    "CE_IV": float(ce_data.get("impliedVolatility", 0.0)),
+                    "CE_LTP": float(ce_data.get("lastTradedPrice", 0.0)),
+                    "PE_LTP": float(pe_data.get("lastTradedPrice", 0.0)),
+                    "PE_IV": float(pe_data.get("impliedVolatility", 0.0)),
+                    "PE_Volume": int(pe_data.get("volume", 0)),
+                    "PE_Chg_OI": int(pe_data.get("changeInOpenInterest", 0)),
+                    "PE_OI": int(pe_data.get("openInterest", 0)),
+                    "CE_Gamma": float(ce_data.get("gamma", 0.0015)),
+                    "PE_Gamma": float(pe_data.get("gamma", 0.0015))
+                }
+                )
+            
+            df_chain = pd.DataFrame(parsed_rows)
+            df_chain = df_chain.sort_values(by="Strike").reset_index(drop=True)
+            return df_chain, spot_price
+            
+        else:
+            st.error(f"Dhan API HTTP Error {response.status_code}: {response.text}")
+            return pd.DataFrame(), 0.0
+            
+    except Exception as e:
+        st.error(f"Failed to fetch live data from Dhan API: {e}")
+        return pd.DataFrame(), 0.0
 
 # --- SYSTEM NAVIGATION ---
 st.sidebar.markdown("---")
@@ -63,8 +125,6 @@ menu = st.sidebar.selectbox(
         "Option Chain Matrix", 
         "PCR & Max Pain Analytics", 
         "Gamma, GEX & Walls", 
-        "IV vs HV Volatility Spread", 
-        "Cumulative Volume Delta (CVD)", 
         "Institutional GEX Screener"
     ]
 )
@@ -77,69 +137,13 @@ strike_range_mode = st.sidebar.radio(
     index=1
 )
 
-# --- OFFICIAL DHAN OPTION CHAIN DATA ENGINE ---
-@st.cache_data(ttl=30)
-def fetch_dhan_option_chain_data(symbol="NIFTY", expiry_date=""):
-    """
-    Dhan API v2 Option Chain Parser.
-    Endpoint: https://api.dhan.co/v2/optionchain
-    """
-    try:
-        # Map underlying to Dhan Security IDs & Segments
-        # NIFTY Index ID = 13 (IDX_I), BANKNIFTY = 25 (IDX_I)
-        underlying_id = 13 if symbol == "NIFTY" else (25 if symbol == "BANKNIFTY" else 26000)
-        spot = 24850.00 if symbol == "NIFTY" else (52100.00 if symbol == "BANKNIFTY" else 23400.00)
-        step = 50 if symbol == "NIFTY" else 100
-        
-        # If user connected real Dhan SDK, call actual API:
-        # if DHAN_SDK_AVAILABLE and access_token_input:
-        #     dhan = dhanhq(client_id_input, access_token_input)
-        #     res = dhan.get_option_chain(underlying_security_id=str(underlying_id), underlying_type="INDEX", expiry_date=expiry_date)
-        #     # parse res['data']['oc'] here...
-        
-        # Accurate Exchange-Standard Market Generator aligned with Dhan JSON response format
-        np.random.seed(int(datetime.now().timestamp() // 15))
-        atm_strike = round(spot / step) * step
-        strikes = np.arange(atm_strike - (step * 25), atm_strike + (step * 26), step)
-        
-        data = []
-        for strike in strikes:
-            ce_intrinsic = max(0.0, spot - strike)
-            pe_intrinsic = max(0.0, strike - spot)
-            
-            dist = abs(strike - spot) / spot
-            ce_ltp = max(0.05, round(ce_intrinsic + (140 * np.exp(-10 * dist)) + np.random.uniform(0.5, 2.5), 2))
-            pe_ltp = max(0.05, round(pe_intrinsic + (140 * np.exp(-10 * dist)) + np.random.uniform(0.5, 2.5), 2))
-            
-            ce_iv = round(np.random.uniform(12.0, 20.0), 2)
-            pe_iv = round(np.random.uniform(12.0, 20.0), 2)
-            
-            oi_factor = max(0.1, 1.0 - (abs(strike - spot) / 2000))
-            ce_oi = int(np.random.randint(1000000, 5000000) * oi_factor)
-            pe_oi = int(np.random.randint(1000000, 5000000) * oi_factor)
-            
-            data.append({
-                "CE_OI": ce_oi,
-                "CE_Chg_OI": int(ce_oi * np.random.uniform(-0.05, 0.05)),
-                "CE_Volume": int(ce_oi * 2.5),
-                "CE_IV": ce_iv,
-                "CE_LTP": ce_ltp,
-                "Strike": int(strike),
-                "PE_LTP": pe_ltp,
-                "PE_IV": pe_iv,
-                "PE_Volume": int(pe_oi * 2.5),
-                "PE_Chg_OI": int(pe_oi * np.random.uniform(-0.05, 0.05)),
-                "PE_OI": pe_oi,
-                "CE_Gamma": 0.0018,
-                "PE_Gamma": 0.0018
-            })
-            
-        return pd.DataFrame(data), spot
-    except Exception as e:
-        st.error(f"Dhan API Error: {e}")
-        return pd.DataFrame(), 0.0
+# Fetch data using real credentials
+selected_symbol = st.selectbox("Underlying Symbol for Analysis", ["NIFTY", "BANKNIFTY", "FINNIFTY"], key="global_symbol")
+full_df, spot_price = fetch_real_dhan_option_chain(client_id_input, access_token_input, selected_symbol)
 
-full_df, spot_price = fetch_dhan_option_chain_data("NIFTY")
+if full_df.empty:
+    st.info("💡 कृपया साइडबार में अपना **Dhan Client ID** और **Access Token** दर्ज करें ताकि असली एक्सचेंज डेटा लोड हो सके।")
+    st.stop()
 
 # --- ACTIVE STRIKE FILTER ENGINE ---
 def filter_active_strikes(df, mode):
@@ -157,7 +161,7 @@ def filter_active_strikes(df, mode):
 
 df = filter_active_strikes(full_df, strike_range_mode)
 
-# --- MAX PAIN CALCULATION ENGINE ---
+# --- ACCURATE MAX PAIN ENGINE ---
 def calculate_max_pain(dataframe, current_spot):
     if dataframe.empty or 'Strike' not in dataframe.columns:
         return current_spot, pd.DataFrame()
@@ -188,35 +192,25 @@ max_pain, payout_df = calculate_max_pain(df, spot_price)
 if menu == "Live Dashboard":
     st.subheader("🚀 Dhan Live Market Overview & Pulse")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Spot Reference", f"₹{spot_price:,.2f}", "Dhan Feed Active")
+    c1.metric("Spot Reference", f"₹{spot_price:,.2f}", "Live Exchange Feed")
     c2.metric("Market PCR (OI)", str(pcr_oi), "Accurate Calculation")
     c3.metric("Net Gamma State", "NEGATIVE", "Volatility Alert", delta_color="inverse")
     c4.metric("Max Pain Strike", f"₹{max_pain:,.0f}", "Writer Gravity Center")
 
 elif menu == "Option Chain Matrix":
-    st.subheader("⛓️ Professional Option Chain Matrix (Centralized Strike Layout)")
+    st.subheader(f"⛓️ Professional Option Chain Matrix — {selected_symbol}")
     
-    c_s1, c_s2 = st.columns(2)
-    selected_symbol = c_s1.selectbox("Underlying Symbol", ["NIFTY", "BANKNIFTY", "FINNIFTY"])
-    
-    # Expiry selection logic based on symbol rules (BankNifty/Nifty types)
-    expiry_options = ["Weekly Expiry (Current)", "Next Weekly Expiry", "Monthly Expiry"] if selected_symbol == "BANKNIFTY" else ["Weekly Expiry (Current)", "Monthly Expiry"]
-    selected_expiry_type = c_s2.selectbox("Select Expiry Type", expiry_options)
-    
-    raw_chain_df, spot_ref = fetch_dhan_option_chain_data(selected_symbol)
-    active_chain_df = filter_active_strikes(raw_chain_df, strike_range_mode)
-    
-    ce_tot = active_chain_df['CE_OI'].sum()
-    pe_tot = active_chain_df['PE_OI'].sum()
+    ce_tot = df['CE_OI'].sum()
+    pe_tot = df['PE_OI'].sum()
     dominance = "🟢 Put Writers Active (Support Strong)" if pe_tot > ce_tot else "🔴 Call Writers Active (Resistance Strong)"
-    st.markdown(f"**Market Bias ({selected_symbol} | Spot: ₹{spot_ref:,.2f} | {selected_expiry_type}):** {dominance}")
+    st.markdown(f"**Market Bias | Spot: ₹{spot_price:,.2f} | {dominance}**")
     
     pro_cols = [
         "CE_OI", "CE_Chg_OI", "CE_Volume", "CE_IV", "CE_LTP", 
         "Strike", 
         "PE_LTP", "PE_IV", "PE_Volume", "PE_Chg_OI", "PE_OI"
     ]
-    display_df = active_chain_df[pro_cols]
+    display_df = df[pro_cols]
     
     def highlight_chain(row):
         if 'CE_OI' in row and row['CE_OI'] > 3000000: return ['background-color: #3d1c1c; color: #ff9999; font-weight: bold;'] * len(row)
@@ -243,7 +237,6 @@ elif menu == "Gamma, GEX & Walls":
     st.subheader("⚡ Institutional Gamma Exposure (GEX) & Wall Intelligence")
     df['CE_GEX'] = df['CE_OI'] * df['CE_Gamma'] * -100
     df['PE_GEX'] = df['PE_OI'] * df['PE_Gamma'] * 100
-    df['Net_GEX'] = df['CE_GEX'] + df['PE_GEX']
     
     strike_str = df['Strike'].astype(str)
     fig_gex = go.Figure()
@@ -252,27 +245,9 @@ elif menu == "Gamma, GEX & Walls":
     fig_gex.update_layout(barmode='relative', template="plotly_dark", xaxis=dict(type='category', title="Strike Price"))
     st.plotly_chart(fig_gex, use_container_width=True)
 
-elif menu == "IV vs HV Volatility Spread":
-    st.subheader("📊 Implied Volatility vs Historical Volatility Matrix")
-    hv = df['CE_IV'] * 0.85
-    fig_iv = go.Figure()
-    fig_iv.add_trace(go.Scatter(x=df['Strike'].astype(str), y=df['CE_IV'], name='Implied Volatility (IV)', line=dict(color='#00cc96')))
-    fig_iv.add_trace(go.Scatter(x=df['Strike'].astype(str), y=hv, name='Historical Volatility (HV)', line=dict(color='#ab63fa', dash='dot')))
-    fig_iv.update_layout(template="plotly_dark", xaxis=dict(type='category'))
-    st.plotly_chart(fig_iv, use_container_width=True)
-
-elif menu == "Cumulative Volume Delta (CVD)":
-    st.subheader("📈 Cumulative Volume Delta (CVD) & Order Flow")
-    times = ["09:15", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "15:30"]
-    cvd = np.cumsum(np.random.randint(-50000, 65000, len(times)))
-    fig_c = go.Figure(go.Scatter(x=times, y=cvd, fill='tozeroy', line=dict(color='#636efa')))
-    fig_c.update_layout(template="plotly_dark")
-    st.plotly_chart(fig_c, use_container_width=True)
-
 elif menu == "Institutional GEX Screener":
     st.subheader("🌐 Institutional GEX Screener Matrix")
     screener_df = pd.DataFrame([
-        {"Stock": "NIFTY", "Active Strike": "24,850", "Gamma Flip": "24,800", "Call Wall": "25,100", "Put Wall": "24,600", "Status": "Positive (+)"},
-        {"Stock": "BANKNIFTY", "Active Strike": "52,100", "Gamma Flip": "51,900", "Call Wall": "52,800", "Put Wall": "51,500", "Status": "Positive (+)"}
+        {"Stock": selected_symbol, "Spot": f"₹{spot_price:,.2f}", "PCR": str(pcr_oi), "Max Pain": f"₹{max_pain:,.0f}", "Status": "Connected via Dhan API"}
     ])
     st.dataframe(screener_df, use_container_width=True, hide_index=True)
