@@ -2,34 +2,19 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-import os
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from utils import init_global_state, get_asset_details_from_master
 
 st.set_page_config(page_title="Institutional PCR & Divergence Desk", page_icon="📈", layout="wide")
 st.markdown("## 📈 Institutional PCR Divergence & Dynamic Spot Analytics")
 st.markdown("---")
 
-@st.cache_data(ttl=60)
-def load_dhan_master():
-    for file in os.listdir("."):
-        if file.endswith(".csv"):
-            try:
-                df = pd.read_csv(file, low_memory=False)
-                df.columns = [str(col).strip().upper() for col in df.columns]
-                return df
-            except:
-                continue
-    return pd.DataFrame()
+init_global_state()
 
-df_master = load_dhan_master()
 is_auth = st.session_state.get("dhan_authenticated", False)
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
-
-# --- GLOBAL SESSION STATE SYNC FOR ASSET ---
-if "global_symbol" not in st.session_state:
-    st.session_state.global_symbol = "NIFTY"
 
 st.sidebar.markdown("### ⚙️ PCR Module Controls")
 selected_symbol = st.sidebar.selectbox(
@@ -40,28 +25,7 @@ selected_symbol = st.sidebar.selectbox(
 )
 st.session_state.global_symbol = selected_symbol
 
-# Bulletproof Index Mapping
-index_mapping = {
-    "NIFTY": {"id": 13, "seg": "IDX_I"},
-    "BANKNIFTY": {"id": 25, "seg": "IDX_I"},
-    "FINNIFTY": {"id": 27, "seg": "IDX_I"}
-}
-
-if selected_symbol in index_mapping:
-    resolved_sec_id = index_mapping[selected_symbol]["id"]
-    resolved_seg = index_mapping[selected_symbol]["seg"]
-else:
-    resolved_sec_id = 13
-    resolved_seg = "NSE_FNO"
-    if not df_master.empty:
-        sym_col = next((c for c in df_master.columns if 'SYMBOL' in c or 'TRADING' in c), None)
-        id_col = next((c for c in df_master.columns if 'ID' in c), None)
-        seg_col = next((c for c in df_master.columns if 'SEGMENT' in c or 'EXCH' in c), None)
-        if sym_col and id_col:
-            matched = df_master[df_master[sym_col].astype(str).str.contains(selected_symbol, na=False)]
-            if not matched.empty:
-                resolved_sec_id = int(matched.iloc[0][id_col])
-                if seg_col: resolved_seg = str(matched.iloc[0][seg_col])
+resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
 
 expiries = ["2026-08-11", "2026-08-18", "2026-08-25"]
 if is_auth and access_token:
@@ -105,7 +69,7 @@ def get_pcr_data(c_id, token, sec_id, seg, exp):
 
 pcr_df, live_spot = get_pcr_data(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry)
 spot_defaults = {"NIFTY": 24500.0, "BANKNIFTY": 50500.0, "FINNIFTY": 23200.0, "RELIANCE": 2950.0}
-if live_spot == 0.0: live_spot = spot_defaults.get(selected_symbol, 50500.0 if selected_symbol=="BANKNIFTY" else 24500.0)
+if live_spot == 0.0: live_spot = spot_defaults.get(selected_symbol, 24500.0)
 
 if not pcr_df.empty:
     pcr_df = pcr_df.sort_values(by="STRIKE").reset_index(drop=True)
@@ -131,7 +95,7 @@ c1, c2, c3, c4 = st.columns(4)
 with c1: st.metric(label=f"Live Spot ({selected_symbol})", value=f"₹{live_spot:,.2f}")
 with c2: st.metric(label="OI Put-Call Ratio (PCR)", value=str(oi_pcr))
 with c3: st.metric(label="Volume PCR", value=str(vol_pcr))
-with c4: st.metric(label="Asset ID & Seg", value=f"{resolved_sec_id} ({resolved_seg})")
+with c4: st.metric(label="Asset ID & Lot", value=f"ID: {resolved_sec_id} | Lot: {lot_size}")
 
 st.markdown("---")
 st.markdown(f"### 📊 PCR Trend Analysis (`{selected_symbol}`) | View: `{chart_range_mode}`")
