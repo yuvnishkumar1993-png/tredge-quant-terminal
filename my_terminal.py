@@ -14,7 +14,7 @@ st.set_page_config(
 
 # App Title & Header
 st.title("📈 Quant Trading Terminal Pro [Advanced GEX & Time-Travel]")
-st.markdown("Institutional Grade F&O Analytics, Time-Travel OI, Gamma Flip Walls & Full-Row Heatmaps")
+st.markdown("Institutional Grade F&O Analytics, Comprehensive Strikes Time-Travel OI, Gamma Walls & Heatmaps")
 
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.header("Navigation")
@@ -31,12 +31,13 @@ menu = st.sidebar.selectbox(
     ]
 )
 
-# --- EXPANDED MOCK OPTION CHAIN (With Greeks & All Strikes) ---
+# --- EXPANDED MOCK OPTION CHAIN (Extended to 50+ Strikes for Comprehensive View) ---
 def get_comprehensive_option_chain(symbol):
     base_spot = 23500 if symbol == "NIFTY" else (50200 if symbol == "BANKNIFTY" else 2950)
     step = 100 if symbol != "RELIANCE" else 20
     
-    strikes = [base_spot + (i * step) for i in range(-15, 16)]
+    # दोनों तरफ 25+ स्ट्राइक यानी कुल 50+ स्ट्राइक प्राइस जनरेट करना
+    strikes = [base_spot + (i * step) for i in range(-25, 26)]
     
     data = []
     for s in strikes:
@@ -130,7 +131,7 @@ elif menu == "Option Chain":
     ]
     
     df_styled = df[columns_order].style.apply(highlight_rows, axis=1)
-    st.dataframe(df_styled, use_container_width=True, height=550)
+    st.dataframe(df_styled, use_container_width=True, height=600)
 
 # --- 3. PCR & MAX PAIN ---
 elif menu == "PCR & Max Pain":
@@ -149,7 +150,7 @@ elif menu == "PCR & Max Pain":
     c3.metric("Max Pain Strike", f"₹{max_pain}")
     
     st.markdown("---")
-    st.subheader("📊 Strike-wise Call OI vs Put OI (Max Pain)")
+    st.subheader("📊 Strike-wise Call OI vs Put OI (Max Pain - All Strikes)")
     
     strike_str = df['Strike'].astype(str)
     
@@ -203,7 +204,7 @@ elif menu == "Gamma, GEX & Walls":
     ce_gex = df['CE_OI'] * df['CE_Gamma'] * 100 * (-1)
     pe_gex = df['PE_OI'] * df['PE_Gamma'] * 100
     
-    st.markdown("### 🏛️ Call Wall & Put Wall (Gamma Exposure)")
+    st.markdown("### 🏛️ Call Wall & Put Wall (Gamma Exposure across all strikes)")
     fig_gex = go.Figure()
     fig_gex.add_trace(go.Bar(x=strike_str, y=ce_gex, name='Call GEX (Resistance Wall)', marker_color='crimson'))
     fig_gex.add_trace(go.Bar(x=strike_str, y=pe_gex, name='Put GEX (Support Wall)', marker_color='seagreen'))
@@ -242,10 +243,10 @@ elif menu == "Gamma, GEX & Walls":
     fig_trend.update_layout(margin=dict(l=20, r=20, t=40, b=20))
     st.plotly_chart(fig_trend, use_container_width=True)
 
-# --- 5. HISTORICAL TIME-TRAVEL ---
+# --- 5. HISTORICAL TIME-TRAVEL (All Strikes Covered) ---
 elif menu == "Historical Time-Travel":
-    st.subheader("⏳ Historical Time-Travel OI & Max Pain Explorer")
-    st.markdown("Select a past time period to inspect historical Open Interest shifts and Max Pain levels.")
+    st.subheader("⏳ Historical Time-Travel OI & Max Pain Explorer (All Strikes)")
+    st.markdown("Select a past time period to inspect historical Open Interest shifts across comprehensive strikes and Max Pain levels.")
     
     col1, col2, col3 = st.columns(3)
     sym_hist = col1.selectbox("Contract Symbol", ["NIFTY", "BANKNIFTY", "RELIANCE"], key="h_sym")
@@ -255,7 +256,7 @@ elif menu == "Historical Time-Travel":
         options=["09:20 AM", "09:45 AM", "10:15 AM", "11:00 AM", "12:30 PM", "02:00 PM", "03:15 PM (Live)"]
     )
     
-    st.info(f"Showing historical snapshot for **{sym_hist}** on **{exp_hist}** at **{time_travel}**")
+    st.info(f"Showing historical snapshot with **Full Strikes Range** for **{sym_hist}** on **{exp_hist}** at **{time_travel}**")
     
     df_hist = get_comprehensive_option_chain(sym_hist)
     strike_str_h = df_hist['Strike'].astype(str)
@@ -267,17 +268,17 @@ elif menu == "Historical Time-Travel":
     m2.metric("Historical PCR (OI)", round(df_hist['PE_OI'].sum() / df_hist['CE_OI'].sum(), 2))
     
     fig_hist = go.Figure()
+    # कॉल और पुट दोनों साइड के लिए सभी स्ट्राइक प्राइस का ओपन इंटरेस्ट एक साथ प्लॉट किया गया है
     fig_hist.add_trace(go.Bar(x=strike_str_h, y=df_hist['CE_OI'], name=f'Call OI ({time_travel})', marker_color='#ff6666'))
     fig_hist.add_trace(go.Bar(x=strike_str_h, y=df_hist['PE_OI'], name=f'Put OI ({time_travel})', marker_color='#33cc66'))
     
-    # सुरक्षित तरीके से वर्टिकल लाइन जोड़ना
     max_pain_str = str(hist_max_pain)
     if max_pain_str in list(strike_str_h):
         fig_hist.add_shape(type="line", x0=max_pain_str, x1=max_pain_str, y0=0, y1=1, yref="paper", line=dict(color="purple", width=2, dash="dash"))
     
     fig_hist.update_layout(
         barmode='group',
-        xaxis=dict(type='category', title="Strike Price"),
+        xaxis=dict(type='category', title="Strike Prices (Comprehensive Range)"),
         yaxis_title="Open Interest (Historical)",
         template="plotly_white",
         margin=dict(l=20, r=20, t=30, b=20)
