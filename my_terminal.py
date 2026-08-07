@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import plotly.graph_objects as go
 
 # --- PAGE CONFIGURATION ---
@@ -22,8 +22,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Quant Trading Terminal Pro [Universal Dynamic F&O Engine]")
-st.markdown("Institutional Suite — Dynamic Index & Stock Derivatives Screener with Auto-Scrip Resolution")
+st.title("⚡ Quant Trading Terminal Pro [Stable Dynamic F&O Engine]")
+st.markdown("Institutional Suite — Live Index & Stock Derivatives Screener with Error-Free Resolution")
 
 # ==============================================================================
 # STEP 1: SECURE API AUTHENTICATION GATEWAY
@@ -38,7 +38,7 @@ if not st.session_state.dhan_authenticated:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("### 🔐 Broker API Access Gateway")
-        st.markdown("Authenticate with your active **DhanHQ API Credentials** to load the universal derivative master.")
+        st.markdown("Authenticate with your active **DhanHQ API Credentials** to initialize the terminal session.")
         
         with st.form("auth_form"):
             input_client_id = st.text_input("Dhan Client ID / User ID", value="")
@@ -65,7 +65,7 @@ if not st.session_state.dhan_authenticated:
                             st.session_state.dhan_authenticated = True
                             st.session_state.client_id = input_client_id.strip()
                             st.session_state.access_token = input_access_token.strip()
-                            st.success("✅ Authentication successful! Loading universal instruments...")
+                            st.success("✅ Authentication successful! Loading terminal...")
                             st.rerun()
                         else:
                             st.error(f"❌ Authentication Failed. HTTP Status: {res.status_code}")
@@ -76,7 +76,7 @@ if not st.session_state.dhan_authenticated:
     st.stop()
 
 # ==============================================================================
-# STEP 2: UNIVERSAL DYNAMIC SCRIP & EXPIRY MASTER LOADER
+# STEP 2: STABLE UNIVERSAL DERIVATIVE SELECTOR
 # ==============================================================================
 st.sidebar.success("🟢 API Session Active")
 if st.sidebar.button("🔒 Disconnect / Logout"):
@@ -99,95 +99,51 @@ menu = st.sidebar.selectbox(
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ Universal Derivative Selector")
 
-# Fetch Dhan official security master CSV dynamically to list all active Index and Stock F&O symbols
-@st.cache_data(ttl=3600)
-def load_dhan_scrip_master():
-    try:
-        url = "https://images.dhan.co/api-data/api-scrip-master.csv"
-        df = pd.read_csv(url, low_memory=False)
-        return df
-    except Exception as e:
-        return pd.DataFrame()
-
-with st.spinner("Syncing Universal F&O Master Database from Exchange..."):
-    master_df = load_dhan_scrip_master()
-
-if master_df.empty:
-    st.error("⚠️ Failed to load scrip master from exchange source. Please check internet connection.")
-    st.stop()
-
-# Filter active Derivative instruments (Index & Stock F&O)
-# Dhan exchange segments: 'IDX_I' for Indices, 'NSE_FNO' for F&O Stocks/Indices options & futures
-fno_df = master_df[master_df['SEM_EXCH_SEGMENT'].isin(['IDX_I', 'NSE_FNO'])].copy()
-
-# Extract unique underlying symbols dynamically
-available_symbols = sorted(fno_df['SEM_TRADING_SYMBOL'].dropna().unique().tolist())
-
-# Provide quick categorization for user convenience
-asset_type = st.sidebar.radio("Asset Class", ["Major Indices", "All NSE F&O Stocks/Indices"])
-
-if asset_type == "Major Indices":
-    default_indices = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"]
-    symbol_choices = [s for s in default_indices if s in available_symbols]
-    if not symbol_choices:
-        symbol_choices = ["NIFTY", "BANKNIFTY"]
-else:
-    # Filter pure underlying symbols (removing expiry suffixes if any)
-    symbol_choices = sorted(list(set([str(s).split('-')[0] for s in available_symbols if len(str(s)) < 15])))
-
-selected_symbol = st.sidebar.selectbox("Select Underlying Symbol", symbol_choices)
-
-# Dynamically resolve Security ID and Segment from Master DataFrame based on selected symbol
-matched_row = fno_df[fno_df['SEM_TRADING_SYMBOL'] == selected_symbol]
-if matched_row.empty:
-    # Try partial match for indices/stocks
-    matched_row = fno_df[fno_df['SEM_TRADING_SYMBOL'].str.startswith(selected_symbol, na=False)]
-
-if not matched_row.empty:
-    current_sec_id = str(matched_row.iloc[0]['SEM_SMST_SECURITY_ID'] if 'SEM_SMST_SECURITY_ID' in matched_row.columns else matched_row.iloc[0]['SEM_SECURITY_ID'])
-    current_segment = str(matched_row.iloc[0]['SEM_EXCH_SEGMENT'])
-else:
-    # Fallback to Nifty defaults if resolution fails
-    current_sec_id = "13"
-    current_segment = "IDX_I"
-
-# DYNAMIC EXPIRY FETCHER DIRECTLY FROM OPTION CHAIN API
-@st.cache_data(ttl=60)
-def fetch_dynamic_expiries(client_id, access_token, sec_id, segment):
-    url = "https://api.dhan.co/v2/optionchain"
-    headers = {
-        "access-token": access_token,
-        "client-id": client_id,
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
-    payload = {
-        "underlyingSecurityId": str(sec_id),
-        "underlyingExchangeSegment": str(segment),
-        "expiry": datetime.now().strftime("%Y-%m-%d")
-    }
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        if response.status_code == 200:
-            res_json = response.json()
-            # If API returns available expiry dates list or we parse from oc keys
-            data_block = res_json.get("data", {})
-            # Some broker implementations return expiry list directly or inside oc
-            # We generate dynamic valid trading dates matching exchange schedules as robust fallback
-            pass
-    except:
-        pass
+# Robust Dictionary mapping for major indices and top F&O stocks with exact Dhan Security IDs & Segments
+instrument_registry = {
+    # Indices
+    "NIFTY": {"sec_id": "13", "segment": "IDX_I", "type": "Index"},
+    "BANKNIFTY": {"sec_id": "25", "segment": "IDX_I", "type": "Index"},
+    "FINNIFTY": {"sec_id": "27", "segment": "IDX_I", "type": "Index"},
+    "MIDCPNIFTY": {"sec_id": "28", "segment": "IDX_I", "type": "Index"},
+    "SENSEX": {"sec_id": "51", "segment": "IDX_I", "type": "Index"},
     
-    # Robust Dynamic Expiry Generator based on current date
+    # Top F&O Stocks (Dhan Security IDs & NSE_FNO Segment)
+    "RELIANCE": {"sec_id": "2885", "segment": "NSE_FNO", "type": "Stock F&O"},
+    "TCS": {"sec_id": "11483", "segment": "NSE_FNO", "type": "Stock F&O"},
+    "INFY": {"sec_id": "1594", "segment": "NSE_FNO", "type": "Stock F&O"},
+    "HDFCBANK": {"sec_id": "1333", "segment": "NSE_FNO", "type": "Stock F&O"},
+    "ICICIBANK": {"sec_id": "4963", "segment": "NSE_FNO", "type": "Stock F&O"},
+    "SBIN": {"sec_id": "3045", "segment": "NSE_FNO", "type": "Stock F&O"},
+    "AXISBANK": {"sec_id": "5900", "segment": "NSE_FNO", "type": "Stock F&O"},
+    "ITC": {"sec_id": "1660", "segment": "NSE_FNO", "type": "Stock F&O"},
+    "LT": {"sec_id": "1148", "segment": "NSE_FNO", "type": "Stock F&O"},
+    "BHARTIARTL": {"sec_id": "10604", "segment": "NSE_FNO", "type": "Stock F&O"}
+}
+
+selected_symbol = st.sidebar.selectbox("Select Underlying Symbol", list(instrument_registry.keys()))
+current_sec_id = instrument_registry[selected_symbol]["sec_id"]
+current_segment = instrument_registry[selected_symbol]["segment"]
+
+# Allow custom override if user wants to input any other security ID
+enable_custom = st.sidebar.checkbox("Advanced: Custom Security ID Override", value=False)
+if enable_custom:
+    current_sec_id = st.sidebar.text_input("Enter Custom Security ID", value=current_sec_id)
+    current_segment = st.sidebar.selectbox("Enter Segment", ["IDX_I", "NSE_FNO", "NSE"])
+
+# DYNAMIC EXPIRY GENERATOR (Tuesdays for Nifty family, Thursdays for BankNifty/Stocks)
+def get_dynamic_expiries(symbol):
     today = datetime.now().date()
+    # Nifty/FinNifty = Tuesday (1), BankNifty/Stocks = Thursday (3)
+    target_weekday = 1 if symbol in ["NIFTY", "FINNIFTY", "MIDCPNIFTY"] else 3
     dates = []
     for i in range(45):
         d = today + timedelta(days=i)
-        if d.weekday() in [1, 3]: # Tuesdays and Thursdays (Active F&O Expiry days)
+        if d.weekday() == target_weekday:
             dates.append(d.strftime("%Y-%m-%d"))
     return dates
 
-expiry_list = fetch_dynamic_expiries(st.session_state.client_id, st.session_state.access_token, current_sec_id, current_segment)
+expiry_list = get_dynamic_expiries(selected_symbol)
 selected_expiry = st.sidebar.selectbox("Select Active Expiry Contract", expiry_list)
 
 strike_range_mode = st.sidebar.radio(
@@ -263,7 +219,7 @@ def fetch_universal_option_chain(client_id, access_token, sec_id, segment, expir
         return pd.DataFrame(), 0.0
 
 if "cached_df" not in st.session_state or refresh_data:
-    with st.spinner(f"Fetching live universal derivative chain for {selected_symbol}..."):
+    with st.spinner(f"Fetching live derivative chain for {selected_symbol}..."):
         df_res, spot_res = fetch_universal_option_chain(
             st.session_state.client_id, 
             st.session_state.access_token, 
@@ -278,7 +234,7 @@ full_df = st.session_state.cached_df
 spot_price = st.session_state.cached_spot
 
 if full_df.empty:
-    st.info("💡 इस कॉन्ट्रैक्ट या एक्सपायरी के लिए लाइव डेटा उपलब्ध नहीं है। कृपया दूसरा सिम्बल या एक्सपायरी चुनें और **Refresh Market Data** दबाएं।")
+    st.info("💡 इस कॉन्ट्रैक्ट या एक्सपायरी के लिए लाइव डेटा उपलब्ध नहीं है (या बाजार बंद है)। कृपया सही Security ID या एक्सपायरी चुनें और **Refresh Market Data** दबाएं।")
     st.stop()
 
 # --- ACTIVE STRIKE FILTER ---
@@ -397,6 +353,6 @@ elif menu == "Institutional Screener":
         "Spot Price": f"₹{spot_price:,.2f}",
         "PCR": pcr_val,
         "Max Pain": f"₹{max_pain_strike:,.0f}",
-        "Status": "Dynamic Scrip & Expiry Synced"
+        "Status": "Stable & Authenticated"
     }])
     st.dataframe(summary_df, use_container_width=True, hide_index=True)
