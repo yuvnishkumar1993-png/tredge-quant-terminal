@@ -23,8 +23,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Quant Trading Terminal Pro [Secure Gateway Architecture]")
-st.markdown("Institutional F&O Analytics Suite — Powered by Verified DhanHQ API Session")
+st.title("⚡ Quant Trading Terminal Pro [Rate-Limit Protected Engine]")
+st.markdown("Institutional F&O Analytics Suite — Optimized with Manual Refresh & Session Control")
 
 # ==============================================================================
 # STEP 1: SECURE API AUTHENTICATION GATEWAY (INITIAL SCREEN)
@@ -48,7 +48,6 @@ if not st.session_state.dhan_authenticated:
             
             if submit_auth:
                 if input_client_id and input_access_token:
-                    # Quick dry-run test request to validate credentials against Dhan API
                     test_url = "https://api.dhan.co/v2/optionchain"
                     test_headers = {
                         "access-token": input_access_token.strip(),
@@ -56,7 +55,6 @@ if not st.session_state.dhan_authenticated:
                         "Content-Type": "application/json",
                         "Accept": "application/json"
                     }
-                    # Default test payload for Nifty
                     test_payload = {
                         "underlyingSecurityId": "13",
                         "underlyingExchangeSegment": "IDX_I",
@@ -64,7 +62,7 @@ if not st.session_state.dhan_authenticated:
                     }
                     try:
                         res = requests.post(test_url, json=test_payload, headers=test_headers, timeout=8)
-                        if res.status_code in [200, 400]: # 400 with valid JSON means auth passed but check payload/market
+                        if res.status_code in [200, 400]:
                             st.session_state.dhan_authenticated = True
                             st.session_state.client_id = input_client_id.strip()
                             st.session_state.access_token = input_access_token.strip()
@@ -114,8 +112,11 @@ strike_range_mode = st.sidebar.radio(
     index=1
 )
 
-# --- SECURED DATA FETCHING ENGINE ---
-@st.cache_data(ttl=15)
+st.sidebar.markdown("---")
+# Manual Refresh Button to prevent 429 rate limit errors
+refresh_data = st.sidebar.button("🔄 Refresh Market Data")
+
+# --- SECURED DATA FETCHING ENGINE (RATE-LIMIT SAFE) ---
 def fetch_verified_dhan_data(client_id, access_token, sec_id, segment, expiry):
     url = "https://api.dhan.co/v2/optionchain"
     headers = {
@@ -132,6 +133,7 @@ def fetch_verified_dhan_data(client_id, access_token, sec_id, segment, expiry):
     
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=10)
+        
         if response.status_code == 200:
             res_json = response.json()
             oc_data = res_json.get("data", {}).get("oc", {})
@@ -165,24 +167,36 @@ def fetch_verified_dhan_data(client_id, access_token, sec_id, segment, expiry):
             if not df.empty:
                 df = df.sort_values(by="Strike").reset_index(drop=True)
             return df, spot_price
+            
+        elif response.status_code == 429:
+            st.warning("⚠️ **Dhan API Rate Limit (429):** बहुत अधिक रिक्वेस्ट भेज दी गई हैं। कृपया 30 सेकंड प्रतीक्षा करें और फिर 'Refresh Market Data' बटन दबाएं।")
+            return pd.DataFrame(), 0.0
         else:
             st.error(f"API Error [{response.status_code}]: {response.text}")
             return pd.DataFrame(), 0.0
+            
     except Exception as e:
         st.error(f"Execution Error: {e}")
         return pd.DataFrame(), 0.0
 
-# Fetch live verified data
-full_df, spot_price = fetch_verified_dhan_data(
-    st.session_state.client_id, 
-    st.session_state.access_token, 
-    custom_sec_id, 
-    segment_choice, 
-    expiry_date_input
-)
+# Use Streamlit session state caching to prevent spamming API on every tab change
+if "cached_df" not in st.session_state or refresh_data:
+    with st.spinner("Fetching live option chain from Dhan API..."):
+        df_res, spot_res = fetch_verified_dhan_data(
+            st.session_state.client_id, 
+            st.session_state.access_token, 
+            custom_sec_id, 
+            segment_choice, 
+            expiry_date_input
+        )
+        st.session_state.cached_df = df_res
+        st.session_state.cached_spot = spot_res
+
+full_df = st.session_state.cached_df
+spot_price = st.session_state.cached_spot
 
 if full_df.empty:
-    st.warning("⚠️ Connected successfully, but option chain data is empty. Please verify your Security ID, Segment, or Expiry Date for the current trading session.")
+    st.info("💡 कृपया सुनिश्चित करें कि **Security ID**, **Segment** और **Expiry Date** बिल्कुल सही हैं, और बाजार खुले होने का समय है। नया डेटा लोड करने के लिए साइडबार में **Refresh Market Data** पर क्लिक करें।")
     st.stop()
 
 # --- ACTIVE STRIKE FILTER ---
@@ -299,6 +313,6 @@ elif menu == "Institutional GEX Screener":
         "Spot": f"₹{spot_price:,.2f}",
         "PCR": pcr_val,
         "Max Pain": f"₹{max_pain_strike:,.0f}",
-        "Status": "Authenticated & Streaming Live"
+        "Status": "Authenticated & Session Cached"
     }])
     st.dataframe(summary_df, use_container_width=True, hide_index=True)
