@@ -29,7 +29,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚡ Quant Trading Terminal Pro [Dhan Official SDK Engine]")
-st.markdown("Connected via official **DhanHQ Python SDK** — Fixed Initialization.")
+st.markdown("Connected via official **DhanHQ Python SDK** — Initialized Correctly.")
 
 # ==========================================
 # 1. LIVE DHAN API CREDENTIALS & AUTHENTICATION
@@ -50,8 +50,8 @@ def fetch_dhan_sdk_option_chain(client_id, access_token, symbol="NIFTY"):
         return pd.DataFrame(), 0.0
 
     try:
-        # Fixed Initialization: DhanHQ SDK standard uses client_id and accessToken positionally or via token mapping
-        dhan = dhanhq(client_id.strip(), access_token.strip())
+        # Fixed Initialization: Passing client_id and access_token properly per DhanHQ SDK spec
+        dhan = dhanhq(client_id=client_id.strip(), token=access_token.strip())
         
         # Map underlying symbols to Dhan underlying security IDs & segments
         # NIFTY = 13 (IDX_I), BANKNIFTY = 25 (IDX_I), FINNIFTY = 27 (IDX_I)
