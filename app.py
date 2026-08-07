@@ -1,47 +1,42 @@
 import streamlit as st
-from dhan_api_client import DhanAPIClient
+import pandas as pd
+import os
 
-st.set_page_config(page_title="Institutional Quant Terminal", page_icon="⚡", layout="wide")
-
-st.markdown("## 🔐 DhanHQ API v2 - Secure Login & Macro Pulse")
-st.markdown("---")
-
-# सेशन स्टेट में लॉगिन को स्थायी बनाए रखना
-if "is_connected" not in st.session_state:
-    st.session_state["is_connected"] = False
-
-col1, col2 = st.columns(2)
-with col1:
-    st.markdown("### 🔑 API Authentication Gateway")
+# --- 📁 DYNAMIC CSV MASTER LOADER ---
+@st.cache_data(ttl=60)
+def load_dynamic_csv_master():
+    """
+    Automatically detects and loads any uploaded CSV file 
+    (Scrip Master or Market Watch files) from the workspace.
+    """
+    possible_files = [
+        "api-scrip-master.csv",
+        "MW-All-Indices-08-Aug-2026.csv",
+        "MW-FO-stock_fut-08-Aug-2026.csv"
+    ]
     
-    # यदि पहले से कनेक्टेड है तो वैल्यू याद रखेगा
-    default_client = st.session_state.get("client_id_val", "")
-    default_token = st.session_state.get("token_val", "")
-    
-    client_id = st.text_input("Dhan Client ID", value=default_client)
-    access_token = st.text_input("Access Token / API Key", type="password", value=default_token)
-    
-    if st.button("Connect to Dhan Server"):
-        if client_id and access_token:
-            st.session_state["dhan_client"] = DhanAPIClient(client_id, access_token)
-            st.session_state["is_connected"] = True
-            st.session_state["client_id_val"] = client_id
-            st.session_state["token_val"] = access_token
-            st.success("✅ Connected Successfully! Session saved across all pages.")
-        else:
-            st.warning("⚠️ कृपया Client ID और Access Token दोनों दर्ज करें।")
+    # Check if any new CSV file is present in the current directory
+    for file in os.listdir("."):
+        if file.endswith(".csv") and file not in possible_files:
+            possible_files.insert(0, file)
 
-    if st.session_state["is_connected"]:
-        st.success("🟢 Status: Live Session Active")
-    else:
-        st.info("ℹ️ Status: Not Connected (Please connect to fetch live data)")
+    for path in possible_files:
+        if os.path.exists(path):
+            try:
+                df = pd.read_csv(path, low_memory=False)
+                df.columns = [str(col).strip().upper() for col in df.columns]
+                return df, path
+            except:
+                continue
+                
+    return pd.DataFrame(), "None"
 
-with col2:
-    st.markdown("### 📊 Macro Boundaries & VIX Regime")
-    vix_val = st.number_input("Current India VIX", value=14.5, step=0.1)
-    if vix_val < 12:
-        st.info("🟢 **VIX Regime-1 (< 12):** Low Volatility. Scalping mode active.")
-    elif 12 <= vix_val <= 16:
-        st.success("🟢 **VIX Regime-2 (12-16):** Ideal Volatility. Option Selling active.")
-    else:
-        st.warning("🟡 **VIX Regime-3 (> 16):** High Volatility. Hedging recommended.")
+# लोड करें और साइडबार में लाइव स्टेटस दिखाएं
+df_master, active_file = load_dynamic_csv_master()
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 📂 Data Pipeline Status")
+if active_file != "None":
+    st.sidebar.success(f"🟢 Active Source:\n`{active_file}`")
+else:
+    st.sidebar.error("🔴 No CSV Database Found!")
