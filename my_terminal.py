@@ -2,12 +2,12 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import plotly.graph_objects as go
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Quant Terminal Pro | Dhan Official v2 Engine",
+    page_title="Quant Terminal Pro | Stable Engine",
     page_icon="⚡",
     layout="wide"
 )
@@ -22,8 +22,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Quant Trading Terminal Pro [Dynamic Expiry API Synced]")
-st.markdown("Institutional F&O Analytics Suite — Auto-Fetched Expiry List from Dhan v2 API")
+st.title("⚡ Quant Trading Terminal Pro [Stable & Clean Edition]")
+st.markdown("Institutional F&O Analytics — Zero Complex Auto-Fetch Errors")
 
 # ==============================================================================
 # STEP 1: LOGIN & AUTHENTICATION GATEWAY
@@ -57,7 +57,7 @@ if not st.session_state.dhan_authenticated:
     st.stop()
 
 # ==============================================================================
-# STEP 2: SIDEBAR & DYNAMIC CONTROLS
+# STEP 2: SIDEBAR & CLEAN CONTROLS
 # ==============================================================================
 st.sidebar.success("🟢 Connected to Dhan")
 if st.sidebar.button("Logout"):
@@ -85,44 +85,9 @@ default_seg = index_map[selected_index]["segment"]
 sec_id_input = st.sidebar.text_input("Security ID", value=str(default_id))
 segment_input = st.sidebar.selectbox("Exchange Segment", ["IDX_I", "NSE", "NSE_FNO"], index=0 if default_seg=="IDX_I" else 1)
 
-# --- DYNAMIC EXPIRY LIST FETCHER API ---
-@st.cache_data(ttl=60)
-def fetch_dhan_expiry_list(client_id, access_token, security_id, seg):
-    url = "https://api.dhan.co/v2/optionchain/expirylist"
-    headers = {
-        "access-token": access_token.strip(),
-        "client-id": client_id.strip(),
-        "Content-Type": "application/json",
-        "Accept": "application/json"
-    }
-    payload = {
-        "UnderlyingScrip": int(security_id),
-        "UnderlyingSeg": str(seg).strip()
-    }
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        if response.status_code == 200:
-            res = response.json()
-            if res.get("status") == "success":
-                dates = res.get("data", [])
-                if isinstance(dates, list) and len(dates) > 0:
-                    return dates
-    except Exception:
-        pass
-    
-    # Fallback default dates if API call fails temporarily
-    today = datetime.now().date()
-    return [(today + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(1, 30) if (today + timedelta(days=i)).weekday() in [1, 3]]
-
-# Fetch active expiry dates dynamically from Dhan server
-available_expiries = fetch_dhan_expiry_list(
-    st.session_state.client_id, 
-    st.session_state.access_token, 
-    sec_id_input, 
-    segment_input
-)
-
-expiry_str = st.sidebar.selectbox("Select Active Expiry (Auto-Synced)", available_expiries)
+# Clean date picker so you have total control over the exact expiry date format (YYYY-MM-DD)
+expiry_date = st.sidebar.date_input("Select Expiry Date", value=datetime.now())
+expiry_str = expiry_date.strftime("%Y-%m-%d")
 
 st.sidebar.markdown("---")
 fetch_btn = st.sidebar.button("🔄 Fetch Live Chain")
@@ -168,13 +133,13 @@ def get_option_chain_data(client_id, access_token, security_id, seg, exp):
                     "CE_Volume": int(ce.get("volume", 0)),
                     "CE_IV": float(ce.get("impliedVolatility", 0.0)),
                     "CE_LTP": float(ce.get("lastTradedPrice", 0.0)),
-                    "PE_LTP": float(pe.get("lastTradedPrice", 0.0)),
-                    "PE_IV": float(pe.get("impliedVolatility", 0.0)),
-                    "PE_Volume": int(pe.get("volume", 0)),
-                    "PE_Chg_OI": int(pe.get("changeInOpenInterest", 0)),
-                    "PE_OI": int(pe.get("openInterest", 0)),
+                    "PE_LTP": float(ce.get("lastTradedPrice", 0.0)),
+                    "PE_IV": float(ce.get("impliedVolatility", 0.0)),
+                    "PE_Volume": int(ce.get("volume", 0)),
+                    "PE_Chg_OI": int(ce.get("changeInOpenInterest", 0)),
+                    "PE_OI": int(ce.get("openInterest", 0)),
                     "CE_Gamma": float(ce.get("gamma", 0.0015)),
-                    "PE_Gamma": float(pe.get("gamma", 0.0015))
+                    "PE_Gamma": float(ce.get("gamma", 0.0015))
                 })
             df = pd.DataFrame(rows)
             if not df.empty:
@@ -188,7 +153,7 @@ def get_option_chain_data(client_id, access_token, security_id, seg, exp):
         return pd.DataFrame(), 0.0
 
 if "df_cache" not in st.session_state or fetch_btn:
-    with st.spinner("Fetching live expiry list & option chain from Dhan..."):
+    with st.spinner("Fetching data from Dhan API v2..."):
         df_res, spot_res = get_option_chain_data(
             st.session_state.client_id, 
             st.session_state.access_token, 
@@ -203,7 +168,7 @@ df = st.session_state.df_cache
 spot = st.session_state.spot_cache
 
 if df.empty:
-    st.info("💡 डेटा नहीं मिला। कृपया सुनिश्चित करें कि बाजार खुला है और चुनी गई एक्सपायरी का डेटा उपलब्ध है।")
+    st.info("💡 डेटा नहीं मिला। कृपया सुनिश्चित करें कि चुनी गई एक्सपायरी डेट एक वैध ट्रेडिंग डे है और बाजार खुला है।")
     st.stop()
 
 # --- CALCULATIONS (PCR & MAX PAIN) ---
