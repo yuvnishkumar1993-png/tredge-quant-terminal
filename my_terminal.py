@@ -2,11 +2,10 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-from datetime import datetime
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Quant Terminal Pro | ±10 Strike Focus Engine",
+    page_title="Quant Terminal Pro | Dhan Official v2 Engine",
     page_icon="⚡",
     layout="wide"
 )
@@ -21,8 +20,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Nifty ±10 Strikes Precision Terminal [Dhan API v2]")
-st.markdown("Clean & Focused Engine — Displaying Exact Spot Center ±10 Strikes Data (OI, LTP, Volume)")
+st.title("⚡ Nifty Precision Option Chain [Dhan Official v2 API]")
+st.markdown("Auto-Synced Expiry List & Spot ±10 Strikes Precision Matrix")
 
 # ==============================================================================
 # STEP 1: LOGIN & AUTHENTICATION GATEWAY
@@ -54,7 +53,7 @@ if not st.session_state.dhan_authenticated:
     st.stop()
 
 # ==============================================================================
-# STEP 2: SIDEBAR CONTROLS
+# STEP 2: SIDEBAR CONTROLS & DYNAMIC EXPIRY FETCHING
 # ==============================================================================
 st.sidebar.success("🟢 Connected to Dhan")
 if st.sidebar.button("Logout"):
@@ -64,21 +63,51 @@ if st.sidebar.button("Logout"):
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ Parameter Setup")
 
-# Default Nifty Settings
-sec_id_input = st.sidebar.text_input("Security ID", value="13")
-segment_input = st.sidebar.selectbox("Exchange Segment", ["IDX_I", "NSE", "NSE_FNO"], index=0)
+# Official Nifty Settings as per Dhan v2 Docs
+sec_id = 13
+segment = "IDX_I"
 
-# Clean Date Picker for Expiry
-expiry_date = st.sidebar.date_input("Select Expiry Date", value=datetime.now())
-expiry_str = expiry_date.strftime("%Y-%m-%d")
+st.sidebar.info(f"📌 Underlying: **NIFTY**\n* Security ID: `{sec_id}`\n* Segment: `{segment}`")
 
-fetch_btn = st.sidebar.button("🔄 Fetch Precision Data")
+# Fetch active expiry list directly from Dhan official endpoint
+@st.cache_data(ttl=60)
+def fetch_dhan_expiry_list(client_id, access_token):
+    url = "https://api.dhan.co/v2/optionchain/expirylist"
+    headers = {
+        "access-token": access_token.strip(),
+        "client-id": client_id.strip(),
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    payload = {
+        "UnderlyingScrip": 13,
+        "UnderlyingSeg": "IDX_I"
+    }
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        if response.status_code == 200:
+            res = response.json()
+            if res.get("status") == "success":
+                return res.get("data", [])
+    except Exception:
+        pass
+    return []
+
+with st.spinner("Fetching active expiries from Dhan server..."):
+    expiry_list = fetch_dhan_expiry_list(st.session_state.client_id, st.session_state.access_token)
+
+if not expiry_list:
+    st.error("⚠️ Failed to fetch expiry list from Dhan API. Please check your credentials or network.")
+    st.stop()
+
+selected_expiry = st.sidebar.selectbox("Select Active Expiry Contract", expiry_list)
+fetch_btn = st.sidebar.button("🔄 Fetch Precision Chain")
 
 # ==============================================================================
-# STEP 3: DATA FETCHING & ±10 STRIKE FILTER ENGINE
+# STEP 3: OPTION CHAIN FETCHING & ±10 STRIKE FILTER ENGINE
 # ==============================================================================
 @st.cache_data(ttl=15)
-def get_precision_option_chain(client_id, access_token, security_id, seg, exp):
+def get_dhan_option_chain(client_id, access_token, exp):
     url = "https://api.dhan.co/v2/optionchain"
     headers = {
         "access-token": access_token.strip(),
@@ -88,8 +117,8 @@ def get_precision_option_chain(client_id, access_token, security_id, seg, exp):
     }
     
     payload = {
-        "UnderlyingScrip": int(security_id),
-        "UnderlyingSeg": str(seg).strip(),
+        "UnderlyingScrip": 13,
+        "UnderlyingSeg": "IDX_I",
         "Expiry": str(exp).strip()
     }
     
@@ -97,8 +126,9 @@ def get_precision_option_chain(client_id, access_token, security_id, seg, exp):
         response = requests.post(url, json=payload, headers=headers, timeout=10)
         if response.status_code == 200:
             res = response.json()
-            oc = res.get("data", {}).get("oc", {})
-            spot = float(res.get("data", {}).get("lastTradedPrice", 0.0))
+            data_block = res.get("data", {})
+            spot = float(data_block.get("last_price", 0.0))
+            oc = data_block.get("oc", {})
             
             if not oc:
                 return pd.DataFrame(), spot
@@ -108,16 +138,17 @@ def get_precision_option_chain(client_id, access_token, security_id, seg, exp):
                 strike = float(strike_str)
                 ce = obj.get("ce", {})
                 pe = obj.get("pe", {})
+                
                 rows.append({
                     "Strike": int(strike),
-                    "CE_OI": int(ce.get("openInterest", 0)),
-                    "CE_Chg_OI": int(ce.get("changeInOpenInterest", 0)),
+                    "CE_OI": int(ce.get("oi", 0)),
+                    "CE_Chg_OI": int(ce.get("oi", 0)) - int(ce.get("previous_oi", 0)),
                     "CE_Volume": int(ce.get("volume", 0)),
-                    "CE_LTP": float(ce.get("lastTradedPrice", 0.0)),
-                    "PE_LTP": float(pe.get("lastTradedPrice", 0.0)),
+                    "CE_LTP": float(ce.get("last_price", 0.0)),
+                    "PE_LTP": float(pe.get("last_price", 0.0)),
                     "PE_Volume": int(pe.get("volume", 0)),
-                    "PE_Chg_OI": int(pe.get("changeInOpenInterest", 0)),
-                    "PE_OI": int(pe.get("openInterest", 0))
+                    "PE_Chg_OI": int(pe.get("oi", 0)) - int(pe.get("previous_oi", 0)),
+                    "PE_OI": int(pe.get("oi", 0))
                 })
             df = pd.DataFrame(rows)
             if not df.empty:
@@ -131,13 +162,11 @@ def get_precision_option_chain(client_id, access_token, security_id, seg, exp):
         return pd.DataFrame(), 0.0
 
 if "df_cache" not in st.session_state or fetch_btn:
-    with st.spinner("Fetching data from Dhan API..."):
-        df_res, spot_res = get_precision_option_chain(
+    with st.spinner("Fetching live option chain from Dhan v2..."):
+        df_res, spot_res = get_dhan_option_chain(
             st.session_state.client_id, 
             st.session_state.access_token, 
-            sec_id_input, 
-            segment_input, 
-            expiry_str
+            selected_expiry
         )
         st.session_state.df_cache = df_res
         st.session_state.spot_cache = spot_res
@@ -146,33 +175,30 @@ full_df = st.session_state.df_cache
 spot = st.session_state.spot_cache
 
 if full_df.empty:
-    st.info("💡 डेटा नहीं मिला। कृपया अपनी Security ID, Segment और Expiry Date की जाँच करें।")
+    st.info("💡 डेटा नहीं मिला। कृपया सुनिश्चित करें कि बाजार खुला है या चुनी गई एक्सपायरी का डेटा उपलब्ध है।")
     st.stop()
 
 # --- FILTER SPOT PRICE ± 10 STRIKES ---
-# Find the index of the strike closest to the current spot price
 full_df['Diff'] = abs(full_df['Strike'] - spot)
 closest_idx = full_df['Diff'].idxmin()
 
-# Slice 10 strikes below and 10 strikes above the closest strike
 start_idx = max(0, closest_idx - 10)
 end_idx = min(len(full_df), closest_idx + 11)
 df = full_df.iloc[start_idx:end_idx].drop(columns=['Diff']).reset_index(drop=True)
 
 # ==============================================================================
-# STEP 4: CLEAN DISPLAY DASHBOARD
+# STEP 4: CLEAN DASHBOARD DISPLAY
 # ==============================================================================
-st.subheader(f"🎯 Spot Reference: ₹{spot:,.2f} | Showing ±10 Strikes Around Spot")
+st.subheader(f"🎯 Nifty Spot: ₹{spot:,.2f} | Expiry: {selected_expiry}")
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Current Spot Price", f"₹{spot:,.2f}")
 col2.metric("Active Center Strike", f"₹{full_df.loc[closest_idx, 'Strike']:,}")
-col3.metric("Total Strikes Displayed", f"{len(df)} Strikes")
+col3.metric("Strikes Displayed", f"{len(df)} Strikes (±10)")
 
 st.markdown("---")
-st.markdown("### 📊 Precision Option Chain (Spot ± 10 Strikes)")
+st.markdown("### 📊 Precision Option Chain Matrix (Spot ± 10 Strikes)")
 
-# Clean column ordering for readability
 display_cols = [
     "CE_OI", "CE_Chg_OI", "CE_Volume", "CE_LTP", 
     "Strike", 
