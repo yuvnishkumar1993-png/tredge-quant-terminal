@@ -10,7 +10,7 @@ from plotly.subplots import make_subplots
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Advanced Institutional GEX Desk", page_icon="🧲", layout="wide")
 
-# --- CUSTOM STYLING ---
+# --- CUSTOM PROFESSIONAL STYLING ---
 st.markdown("""
     <style>
     .main {background-color: #080b10; color: #e6edf3;}
@@ -48,18 +48,12 @@ is_auth = st.session_state.get("dhan_authenticated", False)
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-# --- 2. SIDEBAR CONTROLS & STRIKE FILTER ---
-st.sidebar.markdown("### ⚙️ GEX Desk Controls")
+# --- 2. SIDEBAR CONTROLS ---
+st.sidebar.markdown("### ⚙️ GEX Desk Parameters")
 selected_symbol = st.sidebar.selectbox(
     "Select Underlying Asset", 
     ["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "TCS", "INFY", "SBIN"],
     key="gex_symbol_pro"
-)
-
-strike_range_mode = st.sidebar.selectbox(
-    "Strike Range View",
-    ["±10 Strikes (Precision)", "±20 Strikes (Broad)", "All Strikes (Full Matrix)"],
-    index=0
 )
 
 # Resolve Scrip ID & Segment
@@ -179,11 +173,10 @@ spot_defaults = {"NIFTY": 24500.0, "BANKNIFTY": 50500.0, "FINNIFTY": 23200.0, "R
 if live_spot == 0.0:
     live_spot = spot_defaults.get(selected_symbol, 24500.0)
 
-# Fallback simulation if API offline
 if gex_df.empty:
     step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
     atm = round(live_spot / step) * step
-    strikes = [atm + (i * step) for i in range(-25, 26)]
+    strikes = [atm + (i * step) for i in range(-30, 31)]
     
     mock_recs = []
     np.random.seed(42)
@@ -203,21 +196,28 @@ if gex_df.empty:
     gex_df['Cumulative Net GEX (₹ Cr)'] = gex_df['Net GEX (₹ Cr)'].cumsum()
     st.info("ℹ️ **Safe-Mode Active:** लाइव मार्केट फीड उपलब्ध नहीं होने के कारण मानक संस्थागत मॉडल संरचना प्रदर्शित की जा रही है।")
 
-# --- 5. STRIKE SPLICING FILTER (±10, ±20, ALL) ---
+# --- 5. INTERACTIVE CHART RANGE SELECTOR (MAIN PAGE CONTROL) ---
+st.markdown("### 🎛️ Chart Range & Strike Span Selector")
+chart_range_mode = st.radio(
+    "Select Strike Span for Chart & Analysis:",
+    ["±10 Strikes", "±20 Strikes", "All Strikes (Full Chain)"],
+    horizontal=True,
+    index=0
+)
+
+# Slicing logic based on user selection
 gex_df['Dist'] = abs(gex_df['Strike'] - live_spot)
 center_idx = gex_df['Dist'].idxmin()
 
-if "±10" in strike_range_mode:
+if "±10" in chart_range_mode:
     disp_gex_df = gex_df.iloc[max(0, center_idx-10):min(len(gex_df), center_idx+11)].drop(columns=['Dist'])
-elif "±20" in strike_range_mode:
+elif "±20" in chart_range_mode:
     disp_gex_df = gex_df.iloc[max(0, center_idx-20):min(len(gex_df), center_idx+21)].drop(columns=['Dist'])
 else:
     disp_gex_df = gex_df.drop(columns=['Dist'])
 
 # --- 6. METRICS & WALL CALCULATIONS ---
-total_net_gex = gex_df['Net GEX (₹ Cr)'].sum()
 total_abs_gex = gex_df['Absolute GEX (₹ Cr)'].sum()
-
 call_wall_row = gex_df.loc[gex_df['Call GEX (₹ Cr)'].idxmax()] if not gex_df.empty else None
 put_wall_row = gex_df.loc[gex_df['Put GEX (₹ Cr)'].idxmax()] if not gex_df.empty else None
 
@@ -237,7 +237,7 @@ c1, c2, c3, c4 = st.columns(4)
 
 with c1:
     st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
-    st.metric(label="Total Absolute GEX", value=f"₹{total_abs_gex:,.2f} Cr", delta="Total Dealer Hedging")
+    st.metric(label="Total Absolute GEX", value=f"₹{total_abs_gex:,.2f} Cr", delta="Total Hedging")
     st.markdown("</div>", unsafe_allow_html=True)
 
 with c2:
@@ -257,12 +257,11 @@ with c4:
 
 st.markdown("---")
 
-# --- 7. ADVANCED DUAL-AXIS PLOTLY CHART (NET GEX BARS + CUMULATIVE LINE) ---
-st.markdown(f"### 📊 Advanced Gamma Profile & Cumulative Net GEX (`{selected_symbol}`) — View: `{strike_range_mode}`")
+# --- 7. ADVANCED DUAL-AXIS PLOTLY CHART ---
+st.markdown(f"### 📊 Gamma Profile & Cumulative Net GEX (`{selected_symbol}`) | View: `{chart_range_mode}`")
 
 fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-# Net GEX Bars (Primary Axis)
 bar_colors = ['#2ea043' if val >= 0 else '#f85149' for val in disp_gex_df['Net GEX (₹ Cr)']]
 fig.add_trace(
     go.Bar(
@@ -274,18 +273,16 @@ fig.add_trace(
     secondary_y=False
 )
 
-# Cumulative Net GEX Line (Secondary Axis)
 fig.add_trace(
     go.Scatter(
         x=disp_gex_df['Strike'],
         y=disp_gex_df['Cumulative Net GEX (₹ Cr)'],
         name="Cumulative Net GEX",
-        line=dict(color='#58a6ff', width=3, dash='solid')
+        line=dict(color='#58a6ff', width=3)
     ),
     secondary_y=True
 )
 
-# Vertical Reference Lines
 fig.add_vline(x=live_spot, line_dash="solid", line_color="#ffd33d", annotation_text=f"Spot ({live_spot})", annotation_position="top")
 fig.add_vline(x=call_wall, line_dash="dash", line_color="#f85149", annotation_text=f"Call Wall", annotation_position="top right")
 fig.add_vline(x=put_wall, line_dash="dash", line_color="#2ea043", annotation_text=f"Put Wall", annotation_position="top left")
@@ -294,7 +291,7 @@ fig.update_layout(
     template='plotly_dark',
     plot_bgcolor='#0d1117',
     paper_bgcolor='#0d1117',
-    height=520,
+    height=500,
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     margin=dict(l=20, r=20, t=30, b=20)
 )
@@ -305,7 +302,7 @@ fig.update_yaxes(title_text="<b>Cumulative Net GEX (₹ Cr)</b>", secondary_y=Tr
 
 st.plotly_chart(fig, use_container_width=True)
 
-# --- 8. DETAILED STRIKE MATRIX TABLE WITH CUMULATIVE DATA ---
+# --- 8. DETAILED STRIKE MATRIX TABLE ---
 st.markdown("---")
 st.markdown("### 📋 Strike-wise Absolute, Net & Cumulative GEX Breakdown")
 
