@@ -29,7 +29,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("⚡ Quant Trading Terminal Pro [Dhan Official SDK Engine]")
-st.markdown("Connected via official **DhanHQ Python SDK** — Zero Security ID Errors & Direct Exchange Feed.")
+st.markdown("Connected via official **DhanHQ Python SDK** — Fixed Initialization.")
 
 # ==========================================
 # 1. LIVE DHAN API CREDENTIALS & AUTHENTICATION
@@ -46,25 +46,25 @@ def fetch_dhan_sdk_option_chain(client_id, access_token, symbol="NIFTY"):
         return pd.DataFrame(), 0.0
 
     if not DHAN_SDK_AVAILABLE:
-        st.error("❌ 'dhanhq' library is not installed in your environment. Run `pip install dhanhq` in your terminal.")
+        st.error("❌ 'dhanhq' library is not installed. Run `pip install dhanhq` in your terminal.")
         return pd.DataFrame(), 0.0
 
     try:
-        # Fixed Initialization using Keyword Arguments to prevent positional arg mismatch
-        dhan = dhanhq(client_id=client_id.strip(), access_token=access_token.strip())
+        # Fixed Initialization: DhanHQ SDK standard uses client_id and accessToken positionally or via token mapping
+        dhan = dhanhq(client_id.strip(), access_token.strip())
         
         # Map underlying symbols to Dhan underlying security IDs & segments
         # NIFTY = 13 (IDX_I), BANKNIFTY = 25 (IDX_I), FINNIFTY = 27 (IDX_I)
         underlying_id = 13 if symbol == "NIFTY" else (25 if symbol == "BANKNIFTY" else 27)
         
-        # 1. First fetch available expiries using official SDK method
+        # 1. Fetch available expiries using official SDK method
         exp_res = dhan.expiry_list(under_security_id=underlying_id, under_exchange_segment="IDX_I")
         
         target_expiry = None
         if exp_res and "data" in exp_res and exp_res["data"]:
             expiries = exp_res["data"]
             if isinstance(expiries, list) and len(expiries) > 0:
-                target_expiry = expiries[0] # Pick nearest expiry
+                target_expiry = expiries[0]
                 
         if not target_expiry:
             target_expiry = datetime.now().strftime("%Y-%m-%d")
