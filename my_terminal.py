@@ -14,7 +14,7 @@ st.set_page_config(
 
 # App Title & Header
 st.title("📈 Quant Trading Terminal Pro [Institutional Edition]")
-st.markdown("Advanced F&O Analytics with Full-Row Heatmaps, Strike Range Control, GEX Walls & Historical Time-Travel")
+st.markdown("Advanced F&O Analytics with Full-Width Charts, GEX Walls & IV Skew Analysis")
 
 # --- SIDEBAR NAVIGATION ---
 st.sidebar.header("Navigation")
@@ -31,7 +31,7 @@ menu = st.sidebar.selectbox(
     ]
 )
 
-# --- USER STRIKE RANGE CONTROL (Pro Feature) ---
+# --- USER STRIKE RANGE CONTROL ---
 st.sidebar.markdown("---")
 st.sidebar.subheader("⚙️ Strike Range Control")
 strike_range_mode = st.sidebar.radio("Select Strike Span", ["±10 Strikes (Intraday)", "±25 Strikes (Standard)", "All Comprehensive Strikes"])
@@ -161,7 +161,7 @@ def get_user_option_chain(symbol="NIFTY"):
         strike, ce_oi, ce_chg_oi, ce_vol, ce_iv, ce_ltp, pe_ltp, pe_iv, pe_vol, pe_chg_oi, pe_oi = item
         dist = (strike - spot_approx) / 100
         df_list.append({
-            "CE_OI": ce_oi, "CE_Chg_OI": ce_chg_oi, "CE_Volume": ce_vol, "CE_IV": ce_iv or 15.0,
+            "CE_OI": ce_oi, "CE_Chg_OI": ce_chg_oi, "CE_Volume": ce_vol, "CE_IV": ce_iv if ce_iv > 0 else 15.0,
             "CE_Delta": round(max(0.01, min(0.99, 0.5 - (dist * 0.03))), 2),
             "CE_Gamma": round(max(0.0001, 0.0035 / (1 + abs(dist))), 4),
             "CE_Theta": round(-5.0 - abs(dist) * 0.5, 2),
@@ -171,11 +171,10 @@ def get_user_option_chain(symbol="NIFTY"):
             "PE_Gamma": round(max(0.0001, 0.0035 / (1 + abs(dist))), 4),
             "PE_Theta": round(-5.0 - abs(dist) * 0.5, 2),
             "PE_Vega": round(10.0 + abs(dist) * 0.2, 2),
-            "PE_IV": pe_iv or 15.0, "PE_Volume": pe_vol, "PE_Chg_OI": pe_chg_oi, "PE_OI": pe_oi
+            "PE_IV": pe_iv if pe_iv > 0 else 15.0, "PE_Volume": pe_vol, "PE_Chg_OI": pe_chg_oi, "PE_OI": pe_oi
         })
     df_full = pd.DataFrame(df_list)
 
-    # Apply Strike Range Filter based on Sidebar selection
     if "±10" in strike_range_mode:
         atm_idx = (df_full['Strike'] - spot_approx).abs().idxmin()
         df_filtered = df_full.iloc[max(0, atm_idx-10): min(len(df_full), atm_idx+11)]
@@ -216,39 +215,78 @@ elif menu == "Option Chain":
     cols = ["CE_OI", "CE_Chg_OI", "CE_Volume", "CE_IV", "CE_Delta", "CE_Gamma", "CE_Theta", "CE_Vega", "CE_LTP", "Strike", "PE_LTP", "PE_Delta", "PE_Gamma", "PE_Theta", "PE_Vega", "PE_IV", "PE_Volume", "PE_Chg_OI", "PE_OI"]
     st.dataframe(df[cols].style.apply(highlight_rows, axis=1), use_container_width=True, height=550)
 
-# --- 3. PCR & MAX PAIN ---
+# --- 3. PCR & MAX PAIN (Full-Width Charts & IV Skew Included) ---
 elif menu == "PCR & Max Pain":
-    st.subheader("📉 PCR, IV Skew & Automated Market Insights")
+    st.subheader("📉 PCR, Max Pain & IV Skew Analysis")
     bias = "Bullish Support Dominant (Put Writers Active)" if pcr_oi > 1.05 else "Bearish Resistance Dominant (Call Writers Active)"
     st.info(f"**📌 Market Direction Hint:** {bias} | **PCR:** {pcr_oi} | **Max Pain:** ₹{max_pain}")
     
     strike_str = df['Strike'].astype(str)
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=strike_str, y=df['CE_OI'], name='Call OI (Resistance)', mode='lines', fill='tozeroy', line=dict(color='#ef553b', width=2)))
-    fig.add_trace(go.Scatter(x=strike_str, y=df['PE_OI'], name='Put OI (Support)', mode='lines', fill='tozeroy', line=dict(color='#00cc96', width=2)))
-    fig.update_layout(xaxis=dict(type='category', title="Strike Price"), yaxis_title="Open Interest", template="plotly_white")
-    st.plotly_chart(fig, use_container_width=True)
+    
+    # Open Interest Wave Chart (Legend moved to Top Center for full width)
+    fig_oi = go.Figure()
+    fig_oi.add_trace(go.Scatter(x=strike_str, y=df['CE_OI'], name='Call OI (Resistance)', mode='lines', fill='tozeroy', line=dict(color='#ef553b', width=2)))
+    fig_oi.add_trace(go.Scatter(x=strike_str, y=df['PE_OI'], name='Put OI (Support)', mode='lines', fill='tozeroy', line=dict(color='#00cc96', width=2)))
+    fig_oi.update_layout(
+        xaxis=dict(type='category', title="Strike Price", tickangle=-30),
+        yaxis_title="Open Interest",
+        template="plotly_white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=20, r=20, t=40, b=20)
+    )
+    st.plotly_chart(fig_oi, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("🌊 Implied Volatility (IV Skew / Smirk Curve)")
+    
+    # IV Skew Chart (Restored fully as requested)
+    fig_iv = go.Figure()
+    fig_iv.add_trace(go.Scatter(x=strike_str, y=df['CE_IV'], name='Call IV %', mode='lines+markers', line=dict(color='#ef553b', width=2)))
+    fig_iv.add_trace(go.Scatter(x=strike_str, y=df['PE_IV'], name='Put IV %', mode='lines+markers', line=dict(color='#00cc96', width=2)))
+    fig_iv.update_layout(
+        xaxis=dict(type='category', title="Strike Price", tickangle=-30),
+        yaxis_title="IV (%)",
+        template="plotly_white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=20, r=20, t=40, b=20)
+    )
+    st.plotly_chart(fig_iv, use_container_width=True)
 
 # --- 4. GAMMA, GEX & WALLS ---
 elif menu == "Gamma, GEX & Walls":
     st.subheader("⚡ Advanced Gamma Walls & GEX Exposure")
     ce_gex = df['CE_OI'] * df['CE_Gamma'] * -100
     pe_gex = df['PE_OI'] * df['PE_Gamma'] * 100
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=df['Strike'].astype(str), y=ce_gex, name='Call Wall (Resistance)', marker_color='crimson'))
-    fig.add_trace(go.Bar(x=df['Strike'].astype(str), y=pe_gex, name='Put Wall (Support)', marker_color='seagreen'))
-    fig.update_layout(barmode='relative', xaxis=dict(type='category', title="Strike Price"), yaxis_title="GEX", template="plotly_white")
-    st.plotly_chart(fig, use_container_width=True)
+    
+    fig_gex = go.Figure()
+    fig_gex.add_trace(go.Bar(x=df['Strike'].astype(str), y=ce_gex, name='Call Wall (Resistance)', marker_color='crimson'))
+    fig_gex.add_trace(go.Bar(x=df['Strike'].astype(str), y=pe_gex, name='Put Wall (Support)', marker_color='seagreen'))
+    fig_gex.update_layout(
+        barmode='relative',
+        xaxis=dict(type='category', title="Strike Price", tickangle=-30),
+        yaxis_title="GEX",
+        template="plotly_white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=20, r=20, t=40, b=20)
+    )
+    st.plotly_chart(fig_gex, use_container_width=True)
 
 # --- 5. HISTORICAL TIME-TRAVEL ---
 elif menu == "Historical Time-Travel":
     st.subheader("⏳ Historical Time-Travel OI & Max Pain Explorer")
     t = st.select_slider("Select Time Period", ["09:20 AM", "11:00 AM", "01:30 PM", "03:15 PM (Live)"])
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df['Strike'].astype(str), y=df['CE_OI'], name=f'Call OI ({t})', mode='lines', fill='tozeroy', line=dict(color='#ff6666')))
-    fig.add_trace(go.Scatter(x=df['Strike'].astype(str), y=df['PE_OI'], name=f'Put OI ({t})', mode='lines', fill='tozeroy', line=dict(color='#33cc66')))
-    fig.update_layout(xaxis=dict(type='category', title="Strike Price"), yaxis_title="Historical OI", template="plotly_white")
-    st.plotly_chart(fig, use_container_width=True)
+    
+    fig_hist = go.Figure()
+    fig_hist.add_trace(go.Scatter(x=df['Strike'].astype(str), y=df['CE_OI'], name=f'Call OI ({t})', mode='lines', fill='tozeroy', line=dict(color='#ff6666', width=2)))
+    fig_hist.add_trace(go.Scatter(x=df['Strike'].astype(str), y=df['PE_OI'], name=f'Put OI ({t})', mode='lines', fill='tozeroy', line=dict(color='#33cc66', width=2)))
+    fig_hist.update_layout(
+        xaxis=dict(type='category', title="Strike Price", tickangle=-30),
+        yaxis_title="Historical OI",
+        template="plotly_white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=20, r=20, t=40, b=20)
+    )
+    st.plotly_chart(fig_hist, use_container_width=True)
 
 # --- 6. GAMMA FLIP ALERTS ---
 elif menu == "Gamma Flip Alerts":
