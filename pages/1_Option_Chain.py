@@ -34,7 +34,7 @@ all_symbols = get_available_symbols()
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_gex_v2")
+selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_gex_v3")
 st.session_state.global_symbol = selected_symbol
 
 resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
@@ -45,7 +45,7 @@ strike_range_mode = st.sidebar.radio(
     "Option Chain Strike Range", 
     ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
     index=1,
-    key="strike_range_gex_v2"
+    key="strike_range_gex_v3"
 )
 
 tab1, tab2, tab3 = st.tabs([
@@ -138,8 +138,8 @@ if chain_df.empty:
 
 # --- ADVANCED BLACK-SCHOLES GREEKS & GEX ENGINE ---
 def calculate_institutional_greeks_and_gex(df, spot, lot):
-    r = 0.06 # Risk-free rate (6%)
-    T = 4 / 365.0 # Days to expiry approximation
+    r = 0.06 
+    T = 4 / 365.0 
     
     ce_deltas, pe_deltas = [], []
     gammas, ce_thetas, pe_thetas, vegas = [], [], [], []
@@ -151,14 +151,11 @@ def calculate_institutional_greeks_and_gex(df, spot, lot):
         put_oi = row['Raw_PE_OI']
         
         c_iv = row.get('CE IV', 12.0) / 100.0
-        p_iv = row.get('PE IV', 12.0) / 100.0
         sigma = max(c_iv, 0.01)
         
-        # Black-Scholes Intermediate Variables
         d1 = (np.log(spot / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
         d2 = d1 - sigma * np.sqrt(T)
         
-        # Greeks Calculation
         cdf_d1 = si.norm.cdf(d1)
         pdf_d1 = si.norm.pdf(d1)
         
@@ -170,7 +167,6 @@ def calculate_institutional_greeks_and_gex(df, spot, lot):
         p_theta = (- (spot * pdf_d1 * sigma) / (2 * np.sqrt(T)) + r * K * np.exp(-r * T) * si.norm.cdf(-d2)) / 365.0
         vega = (spot * np.sqrt(T) * pdf_d1) / 100.0
         
-        # Net GEX Calculation in Crores
         net_gex = (call_oi - put_oi) * lot * (spot ** 2) * gamma / 1000000000.0
         
         ce_deltas.append(round(c_delta, 2))
@@ -242,21 +238,19 @@ with tab1:
 
     st.markdown("---")
 
-    # Reorder columns for professional layout matching professional chains
     cols_order = [
         "CE OI (L)", "CE Chg OI", "CE Vol", "CE LTP", "CE %Chg", "CE IV", "CE Delta", "CE Theta",
         "STRIKE",
         "Gamma", "Vega", "PE Theta", "PE Delta", "PE IV", "PE %Chg", "PE LTP", "PE Vol", "PE Chg OI", "PE OI (L)"
     ]
     
-    # Keep only available columns
     final_oc_cols = [c for c in cols_order if c in disp_df.columns]
     matrix_df = disp_df[final_oc_cols].copy()
 
     st.markdown(f"### Live Option Chain & Advanced Greeks Matrix ({strike_range_mode})")
     st.dataframe(matrix_df, use_container_width=True, height=520, hide_index=True)
 
-    # Clean Light Theme OI Walls Chart strictly matching selected range
+    # Clean Light Theme OI Walls Chart strictly matching selected range with X-Axis Zoom Lock
     st.markdown("### Open Interest Concentration Walls (Support & Resistance)")
     wall_df = disp_df.copy()
     
@@ -270,8 +264,8 @@ with tab1:
         paper_bgcolor='#ffffff',
         font=dict(color='#24292e', size=12),
         barmode='group',
-        xaxis=dict(type='category', title="Strike Prices", tickangle=-45),
-        yaxis_title="Open Interest (Lakhs)",
+        xaxis=dict(type='category', title="Strike Prices", tickangle=-45, fixedrange=False),
+        yaxis=dict(title="Open Interest (Lakhs)", fixedrange=True),
         height=380,
         margin=dict(l=20, r=20, t=30, b=20)
     )
@@ -315,12 +309,33 @@ with tab2:
         plot_bgcolor='#ffffff',
         paper_bgcolor='#ffffff',
         font=dict(color='#24292e', size=12),
-        xaxis=dict(type='category', title="Strike Prices", tickangle=-45),
-        yaxis_title="Holder Pain Value (₹)",
+        xaxis=dict(type='category', title="Strike Prices", tickangle=-45, fixedrange=False),
+        yaxis=dict(title="Holder Pain Value (₹)", fixedrange=True),
         height=400,
         margin=dict(l=20, r=20, t=30, b=20)
     )
     st.plotly_chart(fig, use_container_width=True)
+
+    # --- INSTITUTIONAL CONCLUSION & TRADING SETUP (ADDED) ---
+    st.markdown("---")
+    st.markdown("### 📌 Institutional Conclusion & Expiry Direction Setup")
+    
+    col_c1, col_c2 = st.columns(2)
+    with col_c1:
+        st.info(f"""
+        **🎯 Settlement & Pinning Bias:**
+        * **Max Pain Target:** ₹{max_pain:,.0f} (यहाँ एक्सपायरी होने पर ऑप्शन बायर्स को सबसे ज़्यादा दर्द/नुकसान होगा, और राइटर्स को सबसे ज़्यादा फायदा मिलेगा)।
+        * **Gamma Flip Level:** ₹{flip_strike:,.0f} (इस पिवट के ऊपर डीलर्स 'Long Gamma' होते हैं और मार्केट को शांत रखते हैं; इसके नीचे 'Short Gamma' होकर वोलैटिलिटी बढ़ा सकते हैं)।
+        """)
+    with col_c2:
+        distance_to_pain = live_spot - max_pain
+        bias_str = "Bullish Pull towards Max Pain" if distance_to_pain < 0 else ("Bearish Pull towards Max Pain" if distance_to_pain > 0 else "Neutral / At Max Pain")
+        st.success(f"""
+        **💡 Actionable Strategy & Setup:**
+        * **Current Trend Bias:** {bias_str}
+        * **Trading View:** यदि मार्केट Max Pain (₹{max_pain:,.0f}) से बहुत दूर है, तो एक्सपायरी नजदीक आने पर यह उस पॉइंट की तरफ ग्रेविटेशनल पुल (Pull) महसूस करेगा। 
+        * **Execution:** Gamma Flip (₹{flip_strike:,.0f}) के पास ऑप्शन सेलिंग (Strangle/Iron Condor) करना संस्थागत (Institutional) दृष्टिकोण से सबसे सुरक्षित माना जाता है।
+        """)
 
 with tab3:
     st.markdown(f"### Expected Move: 1-Sigma & 2-Sigma Volatility Bands ({selected_symbol})")
@@ -336,7 +351,23 @@ with tab3:
     upper_2s = live_spot + move_2sigma
     lower_2s = live_spot - move_2sigma
     
+    st.markdown("#### 📊 1-Sigma Expected Move (68.2% Confidence)")
     s1_c1, s1_c2, s1_c3 = st.columns(3)
     with s1_c1: st.metric(label="1-Sigma Range (±)", value=f"₹{move_1sigma:,.2f}")
     with s1_c2: st.metric(label="Upper Resistance", value=f"₹{upper_1s:,.2f}")
     with s1_c3: st.metric(label="Lower Support", value=f"₹{lower_1s:,.2f}")
+
+    st.markdown("---")
+
+    st.markdown("#### 🚀 2-Sigma Expected Move (95.4% Confidence - Extreme Volatility Bands)")
+    s2_c1, s2_c2, s2_c3 = st.columns(3)
+    with s2_c1: st.metric(label="2-Sigma Range (±)", value=f"₹{move_2sigma:,.2f}")
+    with s2_c2: st.metric(label="Extreme Upper Limit", value=f"₹{upper_2s:,.2f}")
+    with s2_c3: st.metric(label="Extreme Lower Limit", value=f"₹{lower_2s:,.2f}")
+    
+    st.markdown("---")
+    st.markdown("""
+    > **💡 Sigma Band Trading Insight:** 
+    > * **1-Sigma Band** के अंदर 68% समय मार्केट ट्रेड करता है। अगर बाजार इसके पास जाए और रिवर्सल कैंडल बने, तो शॉर्ट-टर्म ट्रेड ले सकते हैं।
+    > * **2-Sigma Band** बाजार की आखिरी सीमा होती है (95.4% प्रोबेबिलिटी)। इसके बाहर जाने पर तभी ट्रेड करें जब कोई बड़ा ब्रेकआउट या न्यूज़ हो।
+    """)
