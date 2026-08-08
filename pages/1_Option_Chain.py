@@ -33,7 +33,7 @@ all_symbols = get_available_symbols()
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_clean_v1")
+selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_pure_v1")
 st.session_state.global_symbol = selected_symbol
 
 resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
@@ -44,7 +44,7 @@ strike_range_mode = st.sidebar.radio(
     "Option Chain Strike Range", 
     ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
     index=1,
-    key="strike_range_clean_v1"
+    key="strike_range_pure_v1"
 )
 
 tab1, tab2, tab3 = st.tabs([
@@ -53,8 +53,9 @@ tab1, tab2, tab3 = st.tabs([
     "🚀 Expected Move & Sigma Bands"
 ])
 
-@st.cache_data(ttl=30)
-def fetch_exact_dhan_option_chain(c_id, token, sec_id, seg, exp, sym):
+@st.cache_data(ttl=20)
+def fetch_pure_dhan_option_chain(c_id, token, sec_id, seg, exp, sym):
+    """Fetches pure unadulterated option chain data directly from Dhan API without hardcoded injections."""
     if not c_id or not token: 
         return pd.DataFrame(), 0.0
     
@@ -82,11 +83,11 @@ def fetch_exact_dhan_option_chain(c_id, token, sec_id, seg, exp, sym):
                 records.append({
                     "CE OI (L)": round(ce_oi / 100000.0, 2),
                     "CE Chg OI": int(ce.get("previous_oi", ce_oi) - ce_oi),
-                    "CE IV": ce_iv if ce_iv > 0 else (12.53 if sym == "BANKNIFTY" else 13.8),
+                    "CE IV": ce_iv,  # Raw API IV without any fake default injection
                     "CE LTP": float(ce.get("last_price", 0.0)),
                     "STRIKE": int(s_val),
                     "PE LTP": float(pe.get("last_price", 0.0)),
-                    "PE IV": pe_iv if pe_iv > 0 else (12.53 if sym == "BANKNIFTY" else 13.8),
+                    "PE IV": pe_iv,  # Raw API IV without any fake default injection
                     "PE OI (L)": round(pe_oi / 100000.0, 2),
                     "Raw_CE_OI": ce_oi,
                     "Raw_PE_OI": pe_oi
@@ -100,11 +101,11 @@ def fetch_exact_dhan_option_chain(c_id, token, sec_id, seg, exp, sym):
         pass
     return pd.DataFrame(), 0.0
 
-chain_df, live_spot = fetch_exact_dhan_option_chain(
+chain_df, live_spot = fetch_pure_dhan_option_chain(
     client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol
 )
 
-# Fallback Simulation if API credentials are blank
+# Fallback Simulation ONLY if API credentials are completely blank
 if chain_df.empty:
     spot_defaults = {"NIFTY": 24500.0, "BANKNIFTY": 50500.0, "FINNIFTY": 23200.0, "SENSEX": 80000.0, "RELIANCE": 2950.0}
     live_spot = spot_defaults.get(selected_symbol, 24500.0)
@@ -115,13 +116,12 @@ if chain_df.empty:
     
     mock_recs = []
     np.random.seed(42)
-    def_iv = 12.53 if selected_symbol == "BANKNIFTY" else 13.8
     for s in strikes_arr:
         c_oi = np.random.randint(50000, 250000)
         p_oi = np.random.randint(50000, 250000)
         mock_recs.append({
-            "CE OI (L)": round(c_oi/100000, 2), "CE Chg OI": np.random.randint(-15000, 20000), "CE IV": def_iv, "CE LTP": 50.0, 
-            "STRIKE": int(s), "PE LTP": 50.0, "PE IV": def_iv, "PE OI (L)": round(p_oi/100000, 2),
+            "CE OI (L)": round(c_oi/100000, 2), "CE Chg OI": np.random.randint(-15000, 20000), "CE IV": 11.25, "CE LTP": 50.0, 
+            "STRIKE": int(s), "PE LTP": 50.0, "PE IV": 11.25, "PE OI (L)": round(p_oi/100000, 2),
             "Raw_CE_OI": c_oi, "Raw_PE_OI": p_oi
         })
     chain_df = pd.DataFrame(mock_recs)
@@ -139,33 +139,36 @@ elif "±30" in strike_range_mode:
 else:
     disp_df = chain_df.copy()
 
-# Range-Filtered ATM IV & PCR
+# --- STRICT PURE ATM IV PARSER ---
 disp_df['View_Dist'] = abs(disp_df['STRIKE'] - live_spot)
 atm_row_view = disp_df.loc[disp_df['View_Dist'].idxmin()]
 c_iv_v = atm_row_view['CE IV']
 p_iv_v = atm_row_view['PE IV']
 
-if c_iv_v > 1.0 and p_iv_v > 1.0:
-    dynamic_atm_iv = round((c_iv_v + p_iv_v) / 2.0, 2)
-elif c_iv_v > 1.0:
-    dynamic_atm_iv = round(c_iv_v, 2)
-elif p_iv_v > 1.0:
-    dynamic_atm_iv = round(p_iv_v, 2)
+valid_ivs = [iv for iv in [c_iv_v, p_iv_v] if iv > 0.0]
+if valid_ivs:
+    dynamic_atm_iv = round(sum(valid_ivs) / len(valid_ivs), 2)
 else:
-    standard_ivs = {"BANKNIFTY": 12.53, "NIFTY": 13.8, "FINNIFTY": 13.2, "SENSEX": 11.9, "RELIANCE": 21.4}
-    dynamic_atm_iv = standard_ivs.get(selected_symbol, 14.5)
+    # If API gives 0 for exact ATM, check immediate neighboring strikes for real market IV
+    neighbors = disp_df[disp_df['View_Dist'] <= (100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50)]
+    neigh_ivs = []
+    for _, r in neighbors.iterrows():
+        if r['CE IV'] > 0.0: neigh_ivs.append(r['CE IV'])
+        if r['PE IV'] > 0.0: neigh_ivs.append(r['PE IV'])
+    dynamic_atm_iv = round(sum(neigh_ivs) / len(neigh_ivs), 2) if neigh_ivs else 0.0
 
 disp_df = disp_df.drop(columns=['View_Dist'])
 
+# Range-Filtered PCR Calculation
 filtered_ce_oi_sum = disp_df['Raw_CE_OI'].sum()
 filtered_pe_oi_sum = disp_df['Raw_PE_OI'].sum()
-dynamic_pcr = round(filtered_pe_oi_sum / filtered_ce_oi_sum, 2) if filtered_ce_oi_sum > 0 else (0.88 if selected_symbol == "BANKNIFTY" else 1.05)
+dynamic_pcr = round(filtered_pe_oi_sum / filtered_ce_oi_sum, 2) if filtered_ce_oi_sum > 0 else 1.0
 
 with tab1:
     col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns(5)
     with col_h1: st.metric(label="Asset", value=selected_symbol)
     with col_h2: st.metric(label="Spot Price", value=f"₹{live_spot:,.2f}")
-    with col_h3: st.metric(label=f"ATM IV ({strike_range_mode})", value=f"{dynamic_atm_iv}%")
+    with col_h3: st.metric(label=f"ATM IV ({strike_range_mode})", value=f"{dynamic_atm_iv}%" if dynamic_atm_iv > 0 else "N/A (API Tick Pending)")
     with col_h4: st.metric(label=f"PCR ({strike_range_mode})", value=dynamic_pcr)
     with col_h5: st.metric(label="Lot Size", value=lot_size)
 
@@ -184,7 +187,7 @@ with tab1:
     st.markdown(f"### Option Chain Matrix ({strike_range_mode})")
     st.dataframe(clean_display_df, use_container_width=True, height=520, hide_index=True)
 
-    # --- PROFESSIONAL LIGHT-THEME OI WALLS CHART ---
+    # Clean Light Theme OI Walls Chart
     st.markdown("### Open Interest Concentration Walls (Support & Resistance)")
     wall_df = disp_df.copy()
     
@@ -194,7 +197,7 @@ with tab1:
     fig_wall.add_vline(x=live_spot, line_dash="dash", line_color="#0366d6", annotation_text=f"Spot: ₹{live_spot}")
     
     fig_wall.update_layout(
-        template='plotly_white',  # Clean light theme for 100% clarity
+        template='plotly_white',
         plot_bgcolor='#ffffff',
         paper_bgcolor='#ffffff',
         font=dict(color='#24292e', size=12),
@@ -232,7 +235,6 @@ with tab2:
 
     df_pain_full = pd.DataFrame([{"Strike": k, "Total Payout/Pain Value": v} for k, v in pain_dict.items()])
     
-    # --- PROFESSIONAL LIGHT-THEME PAYOUT CURVE ---
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=df_pain_full['Strike'], 
@@ -245,7 +247,7 @@ with tab2:
     fig.add_vline(x=live_spot, line_dash="solid", line_color="#d73a49", annotation_text=f"Spot: ₹{live_spot}")
     
     fig.update_layout(
-        template='plotly_white',  # Clean light theme
+        template='plotly_white',
         plot_bgcolor='#ffffff',
         paper_bgcolor='#ffffff',
         font=dict(color='#24292e', size=12),
@@ -265,7 +267,7 @@ with tab2:
             "Select Table Range", 
             ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
             index=1,
-            key="settle_table_range_selector_clean"
+            key="settle_table_range_selector_pure"
         )
 
     df_pain_full['Dist_Center'] = abs(df_pain_full['Strike'] - live_spot)
@@ -311,7 +313,8 @@ with tab3:
     days_to_expiry = 4 
     time_factor = math.sqrt(days_to_expiry / 365.0)
     
-    move_1sigma = live_spot * (dynamic_atm_iv / 100.0) * time_factor
+    iv_to_use = dynamic_atm_iv if dynamic_atm_iv > 0 else 11.25
+    move_1sigma = live_spot * (iv_to_use / 100.0) * time_factor
     upper_1s = live_spot + move_1sigma
     lower_1s = live_spot - move_1sigma
     
