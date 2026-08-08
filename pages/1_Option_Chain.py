@@ -5,7 +5,6 @@ import pandas as pd
 import numpy as np
 import requests
 import math
-import scipy.stats as si
 import plotly.graph_objects as go
 
 # Bulletproof Dynamic Path Resolution
@@ -34,7 +33,7 @@ all_symbols = get_available_symbols()
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_zerofilt_v1")
+selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_noscipy_v1")
 st.session_state.global_symbol = selected_symbol
 
 resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
@@ -45,7 +44,7 @@ strike_range_mode = st.sidebar.radio(
     "Option Chain Strike Range", 
     ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
     index=1,
-    key="strike_range_zerofilt_v1"
+    key="strike_range_noscipy_v1"
 )
 
 tab1, tab2, tab3 = st.tabs([
@@ -55,7 +54,7 @@ tab1, tab2, tab3 = st.tabs([
 ])
 
 @st.cache_data(ttl=15)
-def fetch_zerofilt_option_chain(c_id, token, sec_id, seg, exp, sym):
+def fetch_noscipy_option_chain(c_id, token, sec_id, seg, exp, sym):
     default_ivs = {"NIFTY": 11.25, "BANKNIFTY": 12.53, "FINNIFTY": 11.8, "SENSEX": 11.2, "RELIANCE": 18.5}
     fallback_iv = default_ivs.get(sym, 13.5)
 
@@ -81,14 +80,13 @@ def fetch_zerofilt_option_chain(c_id, token, sec_id, seg, exp, sym):
                 ce_ltp = float(ce.get("last_price", 0.0))
                 pe_ltp = float(pe.get("last_price", 0.0))
                 
-                # --- FILTER: Skip strikes where both CE and PE LTP are 0.0 ---
                 if ce_ltp == 0.0 and pe_ltp == 0.0:
                     continue
                 
                 ce_oi = int(ce.get("oi", 0))
                 pe_oi = int(pe.get("oi", 0))
                 ce_iv = float(ce.get("iv", 0.0))
-                pe_iv = float(pe.get("iv", 0.0))
+                pe_iv = float(ce.get("iv", 0.0))
                 
                 records.append({
                     "CE OI (L)": round(ce_oi / 100000.0, 2),
@@ -113,7 +111,7 @@ def fetch_zerofilt_option_chain(c_id, token, sec_id, seg, exp, sym):
     fallback_spot = 24500.0 if sym == "NIFTY" else (50500.0 if sym == "BANKNIFTY" else 2950.0)
     return pd.DataFrame(), fallback_spot
 
-chain_df, live_spot = fetch_zerofilt_option_chain(
+chain_df, live_spot = fetch_noscipy_option_chain(
     client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol
 )
 
@@ -174,7 +172,11 @@ filtered_ce_oi_sum = disp_df['Raw_CE_OI'].sum()
 filtered_pe_oi_sum = disp_df['Raw_PE_OI'].sum()
 dynamic_pcr = round(filtered_pe_oi_sum / filtered_ce_oi_sum, 2) if filtered_ce_oi_sum > 0 else 1.0
 
-# Standard Quant Formula: Gamma & Dealer Pinning (GEX) Calculation
+# Pure Math Norm PDF Function (Replaces Scipy without external dependencies)
+def norm_pdf(x):
+    return math.exp(-0.5 * x**2) / math.sqrt(2 * math.pi)
+
+# Standard Quant Formula: Gamma Calculation using pure math
 def calculate_standard_gex(df, spot, iv, lot):
     r = 0.06 
     T = 4 / 365.0 
@@ -188,8 +190,11 @@ def calculate_standard_gex(df, spot, iv, lot):
         sigma = (iv / 100.0) if iv > 0 else 0.12
         if sigma <= 0: sigma = 0.12
         
-        d1 = (np.log(spot / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-        gamma = si.norm.pdf(d1) / (spot * sigma * np.sqrt(T))
+        try:
+            d1 = (math.log(spot / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+            gamma = norm_pdf(d1) / (spot * sigma * math.sqrt(T))
+        except Exception:
+            gamma = 0.0
         
         net_gex = (call_oi - put_oi) * lot * (spot ** 2) * gamma / 1000000000.0 
         gex_list.append(net_gex)
@@ -228,7 +233,6 @@ with tab1:
     st.markdown(f"### Option Chain Matrix ({strike_range_mode}) [Zero LTP Strikes Filtered]")
     st.dataframe(clean_display_df, use_container_width=True, height=520, hide_index=True)
 
-    # Clean Light Theme OI Walls Chart
     st.markdown("### Open Interest Concentration Walls (Support & Resistance)")
     wall_df = disp_df.copy()
     
@@ -310,7 +314,7 @@ with tab2:
             "Select Table Range", 
             ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
             index=1,
-            key="settle_table_range_selector_zerofilt_v1"
+            key="settle_table_range_selector_noscipy"
         )
 
     df_pain_full['Dist_Center'] = abs(df_pain_full['Strike'] - live_spot)
