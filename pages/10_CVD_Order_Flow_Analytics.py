@@ -35,7 +35,7 @@ access_token = st.session_state.get("access_token", "")
 
 # --- SIDEBAR PARAMETERS ---
 st.sidebar.markdown("### ⚙️ CVD & Order Flow Desk")
-selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="cvd_master_sym")
+selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="cvd_master_sym_v2")
 st.session_state.global_symbol = selected_symbol
 
 # Master Fetch (Pulls exact Security ID, Segment and Lot Size from Master CSV)
@@ -49,18 +49,18 @@ lot_size = st.sidebar.number_input(
     max_value=10000, 
     value=int(master_lot), 
     step=1,
-    key=f"cvd_master_lot_ctrl_{selected_symbol}",
+    key=f"cvd_master_lot_ctrl_v2_{selected_symbol}",
     help="मास्टर फाइल या गलत डेटा होने पर यहाँ से सही लॉट साइज़ सेट करें।"
 )
 
 expiries = fetch_live_expiries(client_id, access_token, resolved_sec_id, resolved_seg)
 if not expiries:
     expiries = ["2026-08-13"]
-selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="cvd_master_exp")
+selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="cvd_master_exp_v2")
 
-# --- PROVEN OPTION CHAIN & CVD ENGINE (Matched with Main Option Chain) ---
+# --- PROVEN OPTION CHAIN & CVD ENGINE ---
 @st.cache_data(ttl=30)
-def fetch_master_synced_cvd_data(c_id, token, sec_id, seg, exp, sym, lot):
+def fetch_master_synced_cvd_data_v2(c_id, token, sec_id, seg, exp, sym, lot):
     fallback_spot = 50500.0 if "BANK" in sym.upper() else (24500.0 if "NIFTY" in sym.upper() else 2500.0)
     if not c_id or not token: 
         return pd.DataFrame(), fallback_spot
@@ -73,7 +73,6 @@ def fetch_master_synced_cvd_data(c_id, token, sec_id, seg, exp, sym, lot):
             res_json = res.json()
             block = res_json.get("data", {})
             
-            # Robust Spot Extraction identical to Main Option Chain
             spot_val = float(block.get("last_price") or block.get("lp") or block.get("ltp") or block.get("underlying_price") or 0.0)
             if spot_val <= 0:
                 spot_val = fallback_spot
@@ -88,7 +87,6 @@ def fetch_master_synced_cvd_data(c_id, token, sec_id, seg, exp, sym, lot):
                 ce = obj.get("ce", {})
                 pe = obj.get("pe", {})
                 
-                # Extracting actual traded volumes and OI from proven option chain parser
                 ce_vol = float(ce.get("volume") or ce.get("traded_volume") or ce.get("v") or 0.0)
                 pe_vol = float(pe.get("volume") or pe.get("traded_volume") or pe.get("v") or 0.0)
                 
@@ -98,7 +96,6 @@ def fetch_master_synced_cvd_data(c_id, token, sec_id, seg, exp, sym, lot):
                 ce_ltp = float(ce.get("ltp") or ce.get("last_price") or 0.0)
                 pe_ltp = float(pe.get("ltp") or pe.get("last_price") or 0.0)
 
-                # Order flow Volume Delta calculation per strike using active lot size
                 strike_delta = (ce_vol - pe_vol) * lot
                 
                 records.append({
@@ -121,7 +118,7 @@ def fetch_master_synced_cvd_data(c_id, token, sec_id, seg, exp, sym, lot):
         pass
     return pd.DataFrame(), fallback_spot
 
-df_cvd, live_spot = fetch_master_synced_cvd_data(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol, lot_size)
+df_cvd, live_spot = fetch_master_synced_cvd_data_v2(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol, lot_size)
 
 if df_cvd.empty or live_spot <= 0.0:
     step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
@@ -147,7 +144,7 @@ if df_cvd.empty or live_spot <= 0.0:
         })
     df_cvd = pd.DataFrame(mock_recs)
 
-# --- SAFE INDEXING & FILTERING AROUND TRUE SPOT ---
+# --- STRICT SPOT-CENTERED INDEXING & FILTERING ---
 df_cvd['Dist'] = abs(df_cvd['Strike'] - live_spot)
 if not df_cvd.empty:
     c_idx = int(df_cvd['Dist'].idxmin())
@@ -211,7 +208,6 @@ tab1, tab2 = st.tabs([
 with tab1:
     st.markdown(f"### 📈 Strike-wise Cumulative Volume Delta (CVD) Curve ({selected_symbol})")
     
-    # White background professional chart
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     bar_colors = ['#2ea043' if v >= 0 else '#f85149' for v in disp_cvd['Volume Delta']]
     
@@ -235,6 +231,9 @@ with tab1:
     st.plotly_chart(fig, use_container_width=True)
 
 with tab2:
-    st.markdown("### 📊 Strike-wise Order Flow & Delta Matrix")
+    st.markdown("### 📊 Strike-wise Order Flow & Delta Matrix (Spot-Centered)")
+    # Using 'disp_cvd' instead of full df_cvd to ensure exact spot matching and cleanliness
     matrix_df = disp_cvd[['Strike', 'CE Volume', 'PE Volume', 'Volume Delta', 'Cumulative CVD', 'CE OI', 'PE OI']].copy()
+    
+    # Highlighting current ATM row or formatting for professional look
     st.dataframe(matrix_df, use_container_width=True, height=450, hide_index=True)
