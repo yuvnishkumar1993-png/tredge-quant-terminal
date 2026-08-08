@@ -24,8 +24,8 @@ except ImportError:
     def get_available_symbols():
         return ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "SBIN"]
 
-st.set_page_config(page_title="Advanced Institutional CVD & Order Flow Terminal", page_icon="📊", layout="wide")
-st.markdown("## 📊 Advanced Institutional Cumulative Volume Delta (CVD) & Order Flow Intelligence")
+st.set_page_config(page_title="Master-Synced CVD & Order Flow Terminal", page_icon="📊", layout="wide")
+st.markdown("## 📊 Master-Synced Cumulative Volume Delta (CVD) & Order Flow Intelligence")
 st.markdown("---")
 
 init_global_state()
@@ -35,10 +35,10 @@ access_token = st.session_state.get("access_token", "")
 
 # --- SIDEBAR PARAMETERS ---
 st.sidebar.markdown("### ⚙️ CVD & Order Flow Desk")
-selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="cvd_sym_pro")
+selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="cvd_master_sym")
 st.session_state.global_symbol = selected_symbol
 
-# Master Fetch for Security ID, Segment and Lot Size
+# Master Fetch (Pulls exact Security ID, Segment and Lot Size from Master CSV)
 resolved_sec_id, resolved_seg, master_lot = get_asset_details_from_master(selected_symbol)
 
 st.sidebar.markdown("---")
@@ -49,18 +49,18 @@ lot_size = st.sidebar.number_input(
     max_value=10000, 
     value=int(master_lot), 
     step=1,
-    key=f"cvd_lot_pro_{selected_symbol}",
-    help="मास्टर फाइल से सिंक्ड लॉट साइज़।"
+    key=f"cvd_master_lot_ctrl_{selected_symbol}",
+    help="मास्टर फाइल या गलत डेटा होने पर यहाँ से सही लॉट साइज़ सेट करें।"
 )
 
 expiries = fetch_live_expiries(client_id, access_token, resolved_sec_id, resolved_seg)
 if not expiries:
     expiries = ["2026-08-13"]
-selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="cvd_exp_pro")
+selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="cvd_master_exp")
 
-# --- QUANTITATIVE CVD & ORDER FLOW ENGINE ---
+# --- PROVEN OPTION CHAIN & CVD ENGINE (Matched with Main Option Chain) ---
 @st.cache_data(ttl=30)
-def fetch_advanced_order_flow(c_id, token, sec_id, seg, exp, sym, lot):
+def fetch_master_synced_cvd_data(c_id, token, sec_id, seg, exp, sym, lot):
     fallback_spot = 50500.0 if "BANK" in sym.upper() else (24500.0 if "NIFTY" in sym.upper() else 2500.0)
     if not c_id or not token: 
         return pd.DataFrame(), fallback_spot
@@ -73,6 +73,7 @@ def fetch_advanced_order_flow(c_id, token, sec_id, seg, exp, sym, lot):
             res_json = res.json()
             block = res_json.get("data", {})
             
+            # Robust Spot Extraction identical to Main Option Chain
             spot_val = float(block.get("last_price") or block.get("lp") or block.get("ltp") or block.get("underlying_price") or 0.0)
             if spot_val <= 0:
                 spot_val = fallback_spot
@@ -87,15 +88,17 @@ def fetch_advanced_order_flow(c_id, token, sec_id, seg, exp, sym, lot):
                 ce = obj.get("ce", {})
                 pe = obj.get("pe", {})
                 
-                ce_vol = float(ce.get("volume") or ce.get("traded_volume") or 0.0)
-                pe_vol = float(pe.get("volume") or pe.get("traded_volume") or 0.0)
+                # Extracting actual traded volumes and OI from proven option chain parser
+                ce_vol = float(ce.get("volume") or ce.get("traded_volume") or ce.get("v") or 0.0)
+                pe_vol = float(pe.get("volume") or pe.get("traded_volume") or pe.get("v") or 0.0)
                 
                 ce_oi = float(ce.get("oi", 0.0))
                 pe_oi = float(pe.get("oi", 0.0))
                 
-                ce_ltp = float(ce.get("ltp", 0.0))
-                pe_ltp = float(pe.get("ltp", 0.0))
+                ce_ltp = float(ce.get("ltp") or ce.get("last_price") or 0.0)
+                pe_ltp = float(pe.get("ltp") or pe.get("last_price") or 0.0)
 
+                # Order flow Volume Delta calculation per strike using active lot size
                 strike_delta = (ce_vol - pe_vol) * lot
                 
                 records.append({
@@ -118,7 +121,7 @@ def fetch_advanced_order_flow(c_id, token, sec_id, seg, exp, sym, lot):
         pass
     return pd.DataFrame(), fallback_spot
 
-df_cvd, live_spot = fetch_advanced_order_flow(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol, lot_size)
+df_cvd, live_spot = fetch_master_synced_cvd_data(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol, lot_size)
 
 if df_cvd.empty or live_spot <= 0.0:
     step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
@@ -129,22 +132,22 @@ if df_cvd.empty or live_spot <= 0.0:
     mock_recs = []
     cum_d = 0.0
     for s in strikes:
-        d_val = np.random.uniform(-50000, 70000)
+        d_val = np.random.uniform(-10000, 15000)
         cum_d += d_val
         mock_recs.append({
             "Strike": float(s),
-            "CE Volume": 150000,
-            "PE Volume": 140000,
+            "CE Volume": 50000,
+            "PE Volume": 48000,
             "Volume Delta": round(d_val, 2),
             "Cumulative CVD": round(cum_d, 2),
-            "CE OI": 500000,
-            "PE OI": 480000,
-            "CE LTP": 120.0,
-            "PE LTP": 115.0
+            "CE OI": 200000,
+            "PE OI": 190000,
+            "CE LTP": 100.0,
+            "PE LTP": 95.0
         })
     df_cvd = pd.DataFrame(mock_recs)
 
-# --- SAFE INDEXING & FILTERING ---
+# --- SAFE INDEXING & FILTERING AROUND TRUE SPOT ---
 df_cvd['Dist'] = abs(df_cvd['Strike'] - live_spot)
 if not df_cvd.empty:
     c_idx = int(df_cvd['Dist'].idxmin())
@@ -152,35 +155,33 @@ if not df_cvd.empty:
 else:
     disp_cvd = df_cvd.copy()
 
-# --- ADVANCED ORDER FLOW METRICS ---
+# --- ORDER FLOW METRICS & SIGNALS ---
 total_net_delta = disp_cvd['Volume Delta'].sum()
 total_ce_vol = disp_cvd['CE Volume'].sum()
 total_pe_vol = disp_cvd['PE Volume'].sum()
 delta_imbalance_ratio = round((total_ce_vol - total_pe_vol) / (total_ce_vol + total_pe_vol + 1e-8) * 100.0, 2)
 
-# Institutional Footprint (Max Delta Strike)
 max_delta_row = disp_cvd.loc[disp_cvd['Volume Delta'].abs().idxmax()] if not disp_cvd.empty else None
 institutional_strike = int(max_delta_row['Strike']) if max_delta_row is not None else live_spot
 
-# --- AUTOMATED PROFESSIONAL SIGNAL ENGINE ---
 def generate_professional_signals(imbalance, net_d, spot, inst_strike):
-    if imbalance > 12.0 and net_d > 0:
+    if imbalance > 10.0 and net_d > 0:
         return {
             "bias": "🚀 Aggressive Bullish Order Flow (Call Flow Dominance)",
             "action": "Long / Buy Dips / Bullish Spread Setup",
-            "setup": f" Institutional Footprint दर्ज की गई स्ट्राइक: ₹{inst_strike:,}. बाजार में कॉल बाइंग का मजबूत प्रेशर है।"
+            "setup": f" Institutional Footprint स्ट्राइक: ₹{inst_strike:,}. कॉल बाइंग का मजबूत प्रेशर है।"
         }
-    elif imbalance < -12.0 and net_d < 0:
+    elif imbalance < -10.0 and net_d < 0:
         return {
             "bias": "🚨 Heavy Bearish Pressure (Put Flow Dominance)",
             "action": "Short / Hedged Bear Spread / Protective Puts",
-            "setup": f" Institutional Footprint दर्ज की गई स्ट्राइक: ₹{inst_strike:,}. पुट साइड में एग्रेसिव सेलिंग/बाइंग हावी है।"
+            "setup": f" Institutional Footprint स्ट्राइक: ₹{inst_strike:,}. पुट साइड में एग्रेसिव सेलिंग/बाइंग हावी है।"
         }
     else:
         return {
             "bias": "⚖️ Neutral Order Flow & Balanced Delta",
             "action": "Rangebound Iron Condor / Delta Neutral",
-            "setup": f" बाजार में बायर्स और सेलर्स संतुलित हैं। प्रमुख पिवट स्ट्राइक: ₹{inst_strike:,}."
+            "setup": f" बायर्स और सेलर्स संतुलित हैं। प्रमुख पिवट स्ट्राइक: ₹{inst_strike:,}."
         }
 
 pro_signal = generate_professional_signals(delta_imbalance_ratio, total_net_delta, live_spot, institutional_strike)
@@ -210,7 +211,7 @@ tab1, tab2 = st.tabs([
 with tab1:
     st.markdown(f"### 📈 Strike-wise Cumulative Volume Delta (CVD) Curve ({selected_symbol})")
     
-    # Plotly Chart with Clean White Background
+    # White background professional chart
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     bar_colors = ['#2ea043' if v >= 0 else '#f85149' for v in disp_cvd['Volume Delta']]
     
