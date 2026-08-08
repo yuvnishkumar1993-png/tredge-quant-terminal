@@ -24,8 +24,8 @@ except ImportError:
     def get_available_symbols():
         return ["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "TCS", "SBIN"]
 
-st.set_page_config(page_title="Institutional Option Chain & Settlement Desk", page_icon="⚡", layout="wide")
-st.markdown("## ⚡ Live Institutional Option Chain & Settlement Terminal")
+st.set_page_config(page_title="Institutional Master Option Chain Desk", page_icon="⚡", layout="wide")
+st.markdown("## ⚡ Institutional Option Chain & Quantitative Settlement Terminal")
 st.markdown("---")
 
 init_global_state()
@@ -33,7 +33,7 @@ all_symbols = get_available_symbols()
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_clean_final")
+selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_master_v10")
 st.session_state.global_symbol = selected_symbol
 
 resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
@@ -44,7 +44,7 @@ strike_range_mode = st.sidebar.radio(
     "Option Chain Strike Range", 
     ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
     index=1,
-    key="strike_range_clean_final"
+    key="strike_range_master_v10"
 )
 
 tab1, tab2, tab3 = st.tabs([
@@ -54,8 +54,7 @@ tab1, tab2, tab3 = st.tabs([
 ])
 
 @st.cache_data(ttl=15)
-def fetch_clean_option_chain(c_id, token, sec_id, seg, exp, sym):
-    """Clean, robust option chain fetcher with zero messy errors."""
+def fetch_master_option_chain(c_id, token, sec_id, seg, exp, sym):
     default_ivs = {"NIFTY": 11.25, "BANKNIFTY": 12.53, "FINNIFTY": 11.8, "SENSEX": 11.2, "RELIANCE": 18.5}
     fallback_iv = default_ivs.get(sym, 13.5)
 
@@ -103,15 +102,14 @@ def fetch_clean_option_chain(c_id, token, sec_id, seg, exp, sym):
     except Exception:
         pass
     
-    # Safe fallback if API errors out
     fallback_spot = 24500.0 if sym == "NIFTY" else (50500.0 if sym == "BANKNIFTY" else 2950.0)
     return pd.DataFrame(), fallback_spot
 
-chain_df, live_spot = fetch_clean_option_chain(
+chain_df, live_spot = fetch_master_option_chain(
     client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol
 )
 
-# Mock fallback generation if chain_df is blank
+# Fallback Simulation if API credentials are blank
 if chain_df.empty:
     step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
     atm = round(live_spot / step) * step
@@ -166,7 +164,7 @@ disp_df = disp_df.drop(columns=['View_Dist'])
 # Range-Filtered PCR Calculation
 filtered_ce_oi_sum = disp_df['Raw_CE_OI'].sum()
 filtered_pe_oi_sum = disp_df['Raw_PE_OI'].sum()
-dynamic_pcr = round(filtered_pe_oi_sum / filtered_ce_oi_sum, 2) if filtered_ce_oi_sum > 0 else (0.88 if selected_symbol == "BANKNIFTY" else 1.05)
+dynamic_pcr = round(filtered_pe_oi_sum / filtered_ce_oi_sum, 2) if filtered_ce_oi_sum > 0 else 1.0
 
 with tab1:
     col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns(5)
@@ -271,7 +269,7 @@ with tab2:
             "Select Table Range", 
             ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
             index=1,
-            key="settle_table_range_selector_clean_v2"
+            key="settle_table_range_selector_master_v10"
         )
 
     df_pain_full['Dist_Center'] = abs(df_pain_full['Strike'] - live_spot)
@@ -326,7 +324,6 @@ with tab3:
     upper_2s = live_spot + move_2sigma
     lower_2s = live_spot - move_2sigma
     
-    st.markdown("#### 1-Sigma Expected Move (68.2% Confidence)")
     s1_c1, s1_c2, s1_c3 = st.columns(3)
     with s1_c1: st.metric(label="1-Sigma Range (±)", value=f"₹{move_1sigma:,.2f}")
     with s1_c2: st.metric(label="Upper Resistance", value=f"₹{upper_1s:,.2f}")
@@ -334,8 +331,16 @@ with tab3:
 
     st.markdown("---")
 
-    st.markdown("#### 2-Sigma Expected Move (95.4% Confidence)")
     s2_c1, s2_c2, s2_c3 = st.columns(3)
     with s2_c1: st.metric(label="2-Sigma Range (±)", value=f"₹{move_2sigma:,.2f}")
     with s2_c2: st.metric(label="Extreme Upper Limit", value=f"₹{upper_2s:,.2f}")
     with s2_c3: st.metric(label="Extreme Lower Limit", value=f"₹{lower_2s:,.2f}")
+
+    # --- ADDED: INSTITUTIONAL AUTOMATED STRATEGY SUGGESTION CARD ---
+    st.markdown("---")
+    st.markdown("### 💡 Institutional Strategy Setup Recommendation")
+    col_st1, col_st2 = st.columns(2)
+    with col_st1:
+        st.info(f"**Recommended Iron Condor Setup:**\n* Sell OTM Call at **₹{round(upper_1s, -2)}**\n* Sell OTM Put at **₹{round(lower_1s, -2)}**\n* Buy Protection Wings outside 2-Sigma bands.")
+    with col_st2:
+        st.success(f"**Gravitational Anchor:**\n* Market is gravitating towards Max Pain at **₹{max_pain:,.0f}**.\n* Volatility Regime: {'Low Volatility (Sell Condors)' if iv_to_use < 15 else 'Normal Volatility'}.")
