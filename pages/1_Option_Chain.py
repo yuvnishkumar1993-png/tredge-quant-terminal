@@ -81,7 +81,7 @@ def fetch_gex_option_chain(c_id, token, sec_id, seg, exp, sym):
                 ce_oi = int(ce.get("oi", 0))
                 pe_oi = int(pe.get("oi", 0))
                 ce_iv = float(ce.get("iv", 0.0))
-                pe_iv = float(ce.get("iv", 0.0))
+                pe_iv = float(pe.get("iv", 0.0))
                 
                 records.append({
                     "CE OI (L)": round(ce_oi / 100000.0, 2),
@@ -167,8 +167,8 @@ filtered_ce_oi_sum = disp_df['Raw_CE_OI'].sum()
 filtered_pe_oi_sum = disp_df['Raw_PE_OI'].sum()
 dynamic_pcr = round(filtered_pe_oi_sum / filtered_ce_oi_sum, 2) if filtered_ce_oi_sum > 0 else 1.0
 
-# --- STANDARD QUANT FORMULA: GAMMA & DEALER PINNING (GEX) CALCULATION ---
-def calculate_standard_gex(df, spot, iv, lot):
+# --- ROBUST QUANT FORMULA: GAMMA & DEALER PINNING (GEX) CALCULATION ---
+def calculate_standard_gex(df, spot, lot):
     r = 0.06 # Risk-free rate (6%)
     T = 4 / 365.0 # Days to expiry approximation
     gex_list = []
@@ -178,30 +178,35 @@ def calculate_standard_gex(df, spot, iv, lot):
         call_oi = row['Raw_CE_OI']
         put_oi = row['Raw_PE_OI']
         
-        # Black-Scholes Gamma Standard Formula
-        sigma = (iv / 100.0) if iv > 0 else 0.12
-        if sigma <= 0: sigma = 0.12
+        c_iv = row.get('CE IV', 12.0) / 100.0
+        sigma = c_iv if c_iv > 0.005 else 0.12
         
         d1 = (np.log(spot / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
         gamma = si.norm.pdf(d1) / (spot * sigma * np.sqrt(T))
         
-        # Net GEX = (Call GEX - Put GEX) * Lot Size * Spot^2
-        # Dealers are short calls (positive gamma risk when market rises) and short puts
+        # Net GEX = (Call OI - Put OI) * Lot Size * Spot^2 * Gamma
         net_gex = (call_oi - put_oi) * lot * (spot ** 2) * gamma / 1000000000.0 # in Billions/Crores scale
         gex_list.append(net_gex)
         
     df['Net_GEX'] = gex_list
     return df
 
-chain_df = calculate_standard_gex(chain_df, live_spot, dynamic_atm_iv, lot_size)
+chain_df = calculate_standard_gex(chain_df, live_spot, lot_size)
 
-# Gamma Flip Calculation (Strike where cumulative GEX crosses zero)
+# Robust Gamma Flip Calculation (Zero-Crossing of Cumulative GEX or closest near ATM)
 flip_strike = live_spot
 if not chain_df.empty:
     chain_df['Cum_GEX'] = chain_df['Net_GEX'].cumsum()
-    # Find strike closest to zero cumulative GEX
-    zero_cross_idx = (chain_df['Cum_GEX'] - 0).abs().idxmin()
-    flip_strike = chain_df.loc[zero_cross_idx, 'STRIKE']
+    sign_changes = np.where(np.diff(np.sign(chain_df['Cum_GEX'].values)))[0]
+    if len(sign_changes) > 0:
+        closest_change = min(sign_changes, key=lambda idx: abs(chain_df.loc[idx, 'STRIKE'] - live_spot))
+        flip_strike = chain_df.loc[closest_change, 'STRIKE']
+    else:
+        atm_dist_idx = (chain_df['STRIKE'] - live_spot).abs().idxmin()
+        atm_subset = chain_df.iloc[max(0, atm_dist_idx-15):min(len(chain_df), atm_dist_idx+16)]
+        if not atm_subset.empty:
+            zero_gex_idx = atm_subset['Net_GEX'].abs().idxmin()
+            flip_strike = chain_df.loc[zero_gex_idx, 'STRIKE']
 
 with tab1:
     col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns(5)
@@ -226,15 +231,13 @@ with tab1:
     st.markdown(f"### Option Chain Matrix ({strike_range_mode})")
     st.dataframe(clean_display_df, use_container_width=True, height=520, hide_index=True)
 
-    # Clean Light Theme OI Walls Chart
+    # Clean Light Theme OI Walls Chart (Restricted strictly to selected strike range)
     st.markdown("### Open Interest Concentration Walls (Support & Resistance)")
     wall_df = disp_df.copy()
     
     fig_wall = go.Figure()
-    fig_wall.add_trace(go.Bar(x=wall_df['STRIKE'], y=wall_df['CE OI (L)'], name="Call OI (Resistance)", marker_color='#d73a49'))
-    fig_wall.add_trace(go.Bar(x=wall_df['STRIKE'], y=wall_df['PE OI (L)'], name="Put OI (Support)", marker_color='#28a745'))
-    fig_wall.add_vline(x=live_spot, line_dash="dash", line_color="#0366d6", annotation_text=f"Spot: ₹{live_spot}")
-    fig_wall.add_vline(x=flip_strike, line_dash="dot", line_color="#6f42c1", annotation_text=f"Gamma Flip: ₹{flip_strike}")
+    fig_wall.add_trace(go.Bar(x=wall_df['STRIKE'].astype(str), y=wall_df['CE OI (L)'], name="Call OI (Resistance)", marker_color='#d73a49'))
+    fig_wall.add_trace(go.Bar(x=wall_df['STRIKE'].astype(str), y=wall_df['PE OI (L)'], name="Put OI (Support)", marker_color='#28a745'))
     
     fig_wall.update_layout(
         template='plotly_white',
@@ -242,7 +245,7 @@ with tab1:
         paper_bgcolor='#ffffff',
         font=dict(color='#24292e', size=12),
         barmode='group',
-        xaxis_title="Strike Prices",
+        xaxis=dict(type='category', title="Strike Prices", tickangle=-45),
         yaxis_title="Open Interest (Lakhs)",
         height=380,
         margin=dict(l=20, r=20, t=30, b=20)
@@ -263,7 +266,6 @@ with tab2:
         pain_dict[expiry_price] = total_pain
         
     max_pain = min(pain_dict, key=pain_dict.get) if pain_dict else strikes_list[len(strikes_list)//2]
-    spot_distance = live_spot - max_pain
     
     m1, m2, m3, m4 = st.columns(4)
     with m1: st.metric(label="Live Spot Price", value=f"₹{live_spot:,.2f}")
@@ -277,22 +279,18 @@ with tab2:
     
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        x=df_pain_full['Strike'], 
+        x=df_pain_full['Strike'].astype(str), 
         y=df_pain_full['Total Payout/Pain Value'],
         name="Settlement Pain",
         marker_color=['#28a745' if s == max_pain else ('#6f42c1' if s == flip_strike else '#0366d6') for s in df_pain_full['Strike']]
     ))
-    
-    fig.add_vline(x=max_pain, line_dash="dash", line_color="#28a745", annotation_text=f"Max Pain: ₹{max_pain}")
-    fig.add_vline(x=live_spot, line_dash="solid", line_color="#d73a49", annotation_text=f"Spot: ₹{live_spot}")
-    fig.add_vline(x=flip_strike, line_dash="dot", line_color="#6f42c1", annotation_text=f"Gamma Flip: ₹{flip_strike}")
     
     fig.update_layout(
         template='plotly_white',
         plot_bgcolor='#ffffff',
         paper_bgcolor='#ffffff',
         font=dict(color='#24292e', size=12),
-        xaxis_title="Strike Prices",
+        xaxis=dict(type='category', title="Strike Prices", tickangle=-45),
         yaxis_title="Holder Pain Value (₹)",
         height=400,
         margin=dict(l=20, r=20, t=30, b=20)
