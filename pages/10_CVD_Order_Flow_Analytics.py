@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import requests
 import datetime
+import time
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -24,8 +25,8 @@ except ImportError:
     def get_available_symbols():
         return ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "SBIN"]
 
-st.set_page_config(page_title="Master-Synced CVD & Order Flow Terminal", page_icon="📊", layout="wide")
-st.markdown("## 📊 Master-Synced Cumulative Volume Delta (CVD) & Order Flow Intelligence")
+st.set_page_config(page_title="Institutional Intraday CVD & Order Flow Terminal", page_icon="⚡", layout="wide")
+st.markdown("## ⚡ Institutional Intraday CVD, Gravity Center & Order Flow Intelligence")
 st.markdown("---")
 
 init_global_state()
@@ -33,12 +34,12 @@ all_symbols = get_available_symbols()
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-# --- SIDEBAR PARAMETERS ---
-st.sidebar.markdown("### ⚙️ CVD & Order Flow Desk")
-selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="cvd_master_sym_v3")
+# --- SIDEBAR DESK ---
+st.sidebar.markdown("### ⚙️ Intraday Order Flow Desk")
+selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="cvd_final_sym")
 st.session_state.global_symbol = selected_symbol
 
-# Master Fetch (Pulls exact Security ID, Segment and Lot Size from Master CSV)
+# Master Fetch for Security ID, Segment and Lot Size
 resolved_sec_id, resolved_seg, master_lot = get_asset_details_from_master(selected_symbol)
 
 st.sidebar.markdown("---")
@@ -49,21 +50,36 @@ lot_size = st.sidebar.number_input(
     max_value=10000, 
     value=int(master_lot), 
     step=1,
-    key=f"cvd_master_lot_ctrl_v3_{selected_symbol}",
-    help="मास्टर फाइल या गलत डेटा होने पर यहाँ से सही लॉट साइज़ सेट करें।"
+    key=f"cvd_final_lot_{selected_symbol}",
+    help="मास्टर फाइल से सिंक्ड लॉट साइज़।"
 )
 
 expiries = fetch_live_expiries(client_id, access_token, resolved_sec_id, resolved_seg)
 if not expiries:
     expiries = ["2026-08-13"]
-selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="cvd_master_exp_v3")
+selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="cvd_final_exp")
 
-# --- ROBUST MULTI-KEY VOLUME & CVD ENGINE ---
-@st.cache_data(ttl=20)
-def fetch_robust_cvd_data(c_id, token, sec_id, seg, exp, sym, lot):
+# --- 5-MINUTE AUTO-REFRESH CONFIGURATION ---
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🔄 Auto-Refresh Timer")
+auto_refresh = st.sidebar.checkbox("Enable 5-Min Intraday Auto-Refresh", value=True, key="intraday_auto_ref_final")
+
+if auto_refresh:
+    refresh_placeholder = st.sidebar.empty()
+    refresh_placeholder.text("⏱️ Next refresh in: 5:00 minutes")
+    st.markdown(
+        """
+        <meta http-equiv="refresh" content="300">
+        """,
+        unsafe_allow_html=True
+    )
+
+# --- ROBUST INTRADAY ENGINE WITH GRAVITY CENTER ---
+@st.cache_data(ttl=60)
+def fetch_institutional_cvd_gravity(c_id, token, sec_id, seg, exp, sym, lot):
     fallback_spot = 50500.0 if "BANK" in sym.upper() else (24500.0 if "NIFTY" in sym.upper() else 2500.0)
     if not c_id or not token: 
-        return pd.DataFrame(), fallback_spot
+        return pd.DataFrame(), fallback_spot, fallback_spot
 
     url = "https://api.dhan.co/v2/optionchain"
     headers = {"access-token": token.strip(), "client-id": c_id.strip(), "Content-Type": "application/json"}
@@ -84,15 +100,17 @@ def fetch_robust_cvd_data(c_id, token, sec_id, seg, exp, sym, lot):
                 
             oc_map = block.get("oc", {})
             if not oc_map:
-                return pd.DataFrame(), spot_val
+                return pd.DataFrame(), spot_val, spot_val
 
             records = []
+            total_weighted_strike_vol = 0.0
+            total_traded_vol = 0.0
+
             for s_str, obj in oc_map.items():
                 s_val = float(s_str)
                 ce = obj.get("ce", {})
                 pe = obj.get("pe", {})
                 
-                # Multi-Key Extraction for Traded Volume and Open Interest
                 ce_vol = float(ce.get("volume") or ce.get("traded_volume") or ce.get("v") or ce.get("totalTradedVolume") or 0.0)
                 pe_vol = float(pe.get("volume") or pe.get("traded_volume") or pe.get("v") or pe.get("totalTradedVolume") or 0.0)
                 
@@ -100,10 +118,13 @@ def fetch_robust_cvd_data(c_id, token, sec_id, seg, exp, sym, lot):
                 pe_oi = float(pe.get("oi") or pe.get("openInterest") or 0.0)
                 
                 ce_ltp = float(ce.get("ltp") or ce.get("last_price") or 0.0)
-                pe_ltp = float(pe.get("ltp") or pe.get("last_price") or 0.0)
+                pe_ltp = float(ce.get("ltp") or ce.get("last_price") or 0.0)
 
-                # Correct Order Flow Subtraction (Call Volume - Put Volume) * Lot Size
                 strike_delta = (ce_vol - pe_vol) * lot
+                combined_vol = ce_vol + pe_vol
+
+                total_weighted_strike_vol += s_val * combined_vol
+                total_traded_vol += combined_vol
                 
                 records.append({
                     "Strike": float(s_val),
@@ -120,16 +141,21 @@ def fetch_robust_cvd_data(c_id, token, sec_id, seg, exp, sym, lot):
             if not df_out.empty:
                 df_out = df_out.sort_values(by="Strike").reset_index(drop=True)
                 df_out['Cumulative CVD'] = df_out['Volume Delta'].cumsum()
-            return df_out, spot_val
+
+            # Calculate Volume-Weighted Center of Gravity (Institutional Gravity Center)
+            gravity_center = round(total_weighted_strike_vol / total_traded_vol, 2) if total_traded_vol > 0 else spot_val
+
+            return df_out, spot_val, gravity_center
     except Exception:
         pass
-    return pd.DataFrame(), fallback_spot
+    return pd.DataFrame(), fallback_spot, fallback_spot
 
-df_cvd, live_spot = fetch_robust_cvd_data(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol, lot_size)
+df_cvd, live_spot, gravity_center = fetch_institutional_cvd_gravity(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol, lot_size)
 
 if df_cvd.empty or live_spot <= 0.0:
     step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
     live_spot = 50500.0 if selected_symbol == "BANKNIFTY" else (24500.0 if selected_symbol == "NIFTY" else 2500.0)
+    gravity_center = live_spot
     atm = round(live_spot / step) * step
     strikes = [atm + (i * step) for i in range(-15, 16)]
     
@@ -159,7 +185,7 @@ if not df_cvd.empty:
 else:
     disp_cvd = df_cvd.copy()
 
-# --- ORDER FLOW METRICS & SIGNALS ---
+# --- METRICS & SIGNALS ---
 total_net_delta = disp_cvd['Volume Delta'].sum()
 total_ce_vol = disp_cvd['CE Volume'].sum()
 total_pe_vol = disp_cvd['PE Volume'].sum()
@@ -168,52 +194,52 @@ delta_imbalance_ratio = round((total_ce_vol - total_pe_vol) / (total_ce_vol + to
 max_delta_row = disp_cvd.loc[disp_cvd['Volume Delta'].abs().idxmax()] if not disp_cvd.empty else None
 institutional_strike = int(max_delta_row['Strike']) if max_delta_row is not None else live_spot
 
-def generate_professional_signals(imbalance, net_d, spot, inst_strike):
-    if imbalance > 5.0 and net_d > 0:
+def generate_institutional_signals(imbalance, net_d, spot, gravity, inst_strike):
+    if imbalance > 3.0 and net_d > 0:
         return {
-            "bias": "🚀 Aggressive Bullish Order Flow (Call Flow Dominance)",
-            "action": "Long / Buy Dips / Bullish Spread Setup",
-            "setup": f" Institutional Footprint स्ट्राइक: ₹{inst_strike:,}. कॉल बाइंग का मजबूत प्रेशर है।"
+            "bias": "🚀 Intraday Bullish Momentum (Call Flow Dominance)",
+            "action": "Intraday Buy on Dips / Long Call Spread",
+            "setup": f" Institutional Gravity Center: ₹{gravity:,.0f} | Footprint Strike: ₹{inst_strike:,}. कॉल बाइंग का भारी प्रेशर है।"
         }
-    elif imbalance < -5.0 and net_d < 0:
+    elif imbalance < -3.0 and net_d < 0:
         return {
-            "bias": "🚨 Heavy Bearish Pressure (Put Flow Dominance)",
-            "action": "Short / Hedged Bear Spread / Protective Puts",
-            "setup": f" Institutional Footprint स्ट्राइक: ₹{inst_strike:,}. पुट साइड में एग्रेसिव सेलिंग/बाइंग हावी है।"
+            "bias": "🚨 Intraday Bearish Pressure (Put Flow Dominance)",
+            "action": "Intraday Sell on Rallies / Protective Puts",
+            "setup": f" Institutional Gravity Center: ₹{gravity:,.0f} | Footprint Strike: ₹{inst_strike:,}. पुट साइड में एग्रेसिव सेलिंग हावी है।"
         }
     else:
         return {
-            "bias": "⚖️ Neutral Order Flow & Balanced Delta",
-            "action": "Rangebound Iron Condor / Delta Neutral",
-            "setup": f" बायर्स और सेलर्स संतुलित हैं। प्रमुख पिवट स्ट्राइक: ₹{inst_strike:,}."
+            "bias": "⚖️ Intraday Rangebound & Balanced Session",
+            "action": "Delta Neutral / Avoid Aggressive Scalps",
+            "setup": f" बाजार में बायर्स और सेलर्स संतुलित हैं। Gravity Center पिवट: ₹{gravity:,.0f}."
         }
 
-pro_signal = generate_professional_signals(delta_imbalance_ratio, total_net_delta, live_spot, institutional_strike)
+inst_signal = generate_institutional_signals(delta_imbalance_ratio, total_net_delta, live_spot, gravity_center, institutional_strike)
 
 # --- SIDEBAR SIGNAL PANEL ---
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🎯 Professional Trade Signals")
-st.sidebar.info(f"**Market Bias:**\n{pro_signal['bias']}")
-st.sidebar.success(f"**Execution Strategy:**\n`{pro_signal['action']}`\n\n📖 {pro_signal['setup']}")
+st.sidebar.markdown("### 🎯 Institutional Signals")
+st.sidebar.info(f"**Market Bias:**\n{inst_signal['bias']}")
+st.sidebar.success(f"**Execution Strategy:**\n`{inst_signal['action']}`\n\n📖 {inst_signal['setup']}")
 
 # --- TOP METRICS DASHBOARD ---
 c1, c2, c3, c4, c5 = st.columns(5)
 with c1: st.metric(label="Live Spot Price", value=f"₹{live_spot:,.2f}")
-with c2: st.metric(label="Net Volume Delta", value=f"{total_net_delta:,.0f}", delta="Buying Pressure" if total_net_delta > 0 else "Selling Pressure")
-with c3: st.metric(label="Delta Imbalance", value=f"{delta_imbalance_ratio:+.2f}%")
-with c4: st.metric(label="Inst. Footprint Strike", value=f"₹{institutional_strike:,}")
+with c2: st.metric(label="Gravity Center", value=f"₹{gravity_center:,.0f}")
+with c3: st.metric(label="Net Volume Delta", value=f"{total_net_delta:,.0f}", delta="Bullish" if total_net_delta > 0 else "Bearish")
+with c4: st.metric(label="Delta Imbalance", value=f"{delta_imbalance_ratio:+.2f}%")
 with c5: st.metric(label="Active Lot Size", value=str(lot_size))
 
 st.markdown("---")
 
 # --- TABS LAYOUT ---
 tab1, tab2 = st.tabs([
-    "📊 Cumulative Volume Delta (CVD) & White Background Chart", 
+    "📊 CVD Curve & Gravity Center (White Background)", 
     "⚡ Strike-wise Order Flow Imbalance Matrix"
 ])
 
 with tab1:
-    st.markdown(f"### 📈 Strike-wise Cumulative Volume Delta (CVD) Curve ({selected_symbol})")
+    st.markdown(f"### 📈 Intraday Strike-wise CVD Curve & Gravity Center ({selected_symbol})")
     
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     bar_colors = ['#2ea043' if v >= 0 else '#f85149' for v in disp_cvd['Volume Delta']]
@@ -222,6 +248,7 @@ with tab1:
     fig.add_trace(go.Scatter(x=disp_cvd['Strike'], y=disp_cvd['Cumulative CVD'], name="Cumulative CVD", line=dict(color='#1f77b4', width=3)), secondary_y=True)
     
     fig.add_vline(x=live_spot, line_dash="solid", line_color="#d62728", annotation_text=f"Spot: ₹{live_spot:,.0f}")
+    fig.add_vline(x=gravity_center, line_dash="dash", line_color="#9467bd", annotation_text=f"Gravity Center: ₹{gravity_center:,.0f}")
     
     fig.update_layout(
         template='plotly_white',
