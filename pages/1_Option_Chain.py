@@ -25,7 +25,7 @@ except ImportError:
         return ["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "TCS", "SBIN"]
 
 st.set_page_config(page_title="Institutional Master Option Chain Desk", page_icon="⚡", layout="wide")
-st.markdown("## ⚡ Institutional Option Chain, Settlement & Gamma Flip Terminal")
+st.markdown("## ⚡ Live Institutional Option Chain & Settlement Terminal")
 st.markdown("---")
 
 init_global_state()
@@ -33,7 +33,7 @@ all_symbols = get_available_symbols()
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_noscipy_v1")
+selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_puredat_v1")
 st.session_state.global_symbol = selected_symbol
 
 resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
@@ -44,7 +44,7 @@ strike_range_mode = st.sidebar.radio(
     "Option Chain Strike Range", 
     ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
     index=1,
-    key="strike_range_noscipy_v1"
+    key="strike_range_puredat_v1"
 )
 
 tab1, tab2, tab3 = st.tabs([
@@ -53,13 +53,11 @@ tab1, tab2, tab3 = st.tabs([
     "🚀 Expected Move & Sigma Bands"
 ])
 
-@st.cache_data(ttl=15)
-def fetch_noscipy_option_chain(c_id, token, sec_id, seg, exp, sym):
-    default_ivs = {"NIFTY": 11.25, "BANKNIFTY": 12.53, "FINNIFTY": 11.8, "SENSEX": 11.2, "RELIANCE": 18.5}
-    fallback_iv = default_ivs.get(sym, 13.5)
-
+@st.cache_data(ttl=10)
+def fetch_pure_live_option_chain(c_id, token, sec_id, seg, exp, sym):
+    """Strictly pure live parser. ZERO fake mock data generation."""
     if not c_id or not token: 
-        return pd.DataFrame(), 24500.0 if sym=="NIFTY" else 50500.0
+        return pd.DataFrame(), 0.0
     
     url = "https://api.dhan.co/v2/optionchain"
     headers = {"access-token": token.strip(), "client-id": c_id.strip(), "Content-Type": "application/json"}
@@ -80,22 +78,23 @@ def fetch_noscipy_option_chain(c_id, token, sec_id, seg, exp, sym):
                 ce_ltp = float(ce.get("last_price", 0.0))
                 pe_ltp = float(pe.get("last_price", 0.0))
                 
+                # Filter out completely dead strikes where both LTPs are zero
                 if ce_ltp == 0.0 and pe_ltp == 0.0:
                     continue
                 
                 ce_oi = int(ce.get("oi", 0))
                 pe_oi = int(pe.get("oi", 0))
                 ce_iv = float(ce.get("iv", 0.0))
-                pe_iv = float(ce.get("iv", 0.0))
+                pe_iv = float(pe.get("iv", 0.0))
                 
                 records.append({
                     "CE OI (L)": round(ce_oi / 100000.0, 2),
                     "CE Chg OI": int(ce.get("previous_oi", ce_oi) - ce_oi),
-                    "CE IV": ce_iv if ce_iv > 0.5 else fallback_iv,
+                    "CE IV": ce_iv,
                     "CE LTP": ce_ltp,
                     "STRIKE": int(s_val),
                     "PE LTP": pe_ltp,
-                    "PE IV": pe_iv if pe_iv > 0.5 else fallback_iv,
+                    "PE IV": pe_iv,
                     "PE OI (L)": round(pe_oi / 100000.0, 2),
                     "Raw_CE_OI": ce_oi,
                     "Raw_PE_OI": pe_oi
@@ -104,35 +103,20 @@ def fetch_noscipy_option_chain(c_id, token, sec_id, seg, exp, sym):
             df_out = pd.DataFrame(records)
             if not df_out.empty: 
                 df_out = df_out.sort_values(by="STRIKE").reset_index(drop=True)
-            return df_out, (spot_val if spot_val > 0 else (24500.0 if sym=="NIFTY" else 50500.0))
+            return df_out, spot_val
     except Exception:
         pass
     
-    fallback_spot = 24500.0 if sym == "NIFTY" else (50500.0 if sym == "BANKNIFTY" else 2950.0)
-    return pd.DataFrame(), fallback_spot
+    return pd.DataFrame(), 0.0
 
-chain_df, live_spot = fetch_noscipy_option_chain(
+chain_df, live_spot = fetch_pure_live_option_chain(
     client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol
 )
 
-# Fallback Simulation if API credentials are blank
-if chain_df.empty:
-    step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
-    atm = round(live_spot / step) * step
-    strikes_arr = [atm + (i * step) for i in range(-35, 36)]
-    
-    mock_recs = []
-    np.random.seed(42)
-    def_iv = 11.25 if selected_symbol == "NIFTY" else (12.53 if selected_symbol == "BANKNIFTY" else 14.0)
-    for s in strikes_arr:
-        c_oi = np.random.randint(50000, 250000)
-        p_oi = np.random.randint(50000, 250000)
-        mock_recs.append({
-            "CE OI (L)": round(c_oi/100000, 2), "CE Chg OI": np.random.randint(-15000, 20000), "CE IV": def_iv, "CE LTP": 50.0, 
-            "STRIKE": int(s), "PE LTP": 50.0, "PE IV": def_iv, "PE OI (L)": round(p_oi/100000, 2),
-            "Raw_CE_OI": c_oi, "Raw_PE_OI": p_oi
-        })
-    chain_df = pd.DataFrame(mock_recs)
+# Safety check: If API returns empty data, display warning instead of fake data
+if chain_df.empty or live_spot == 0.0:
+    st.warning("⚠️ Live Option Chain data stream is currently empty or API credentials are pending. Please check your Dhan Client ID & Access Token.")
+    st.stop()
 
 # Strike Range Filtering Logic
 chain_df['Dist'] = abs(chain_df['STRIKE'] - live_spot)
@@ -147,23 +131,19 @@ elif "±30" in strike_range_mode:
 else:
     disp_df = chain_df.copy()
 
-# Accurate ATM IV Parsing based on current view
+# Accurate ATM IV Parsing from live view
 disp_df['View_Dist'] = abs(disp_df['STRIKE'] - live_spot)
 atm_row_view = disp_df.loc[disp_df['View_Dist'].idxmin()]
 c_iv_v = atm_row_view['CE IV']
 p_iv_v = atm_row_view['PE IV']
 
-default_ivs = {"NIFTY": 11.25, "BANKNIFTY": 12.53, "FINNIFTY": 11.8, "SENSEX": 11.2, "RELIANCE": 18.5}
-fallback_iv = default_ivs.get(selected_symbol, 13.5)
-
-if c_iv_v > 0.5 and p_iv_v > 0.5:
-    dynamic_atm_iv = round((c_iv_v + p_iv_v) / 2.0, 2)
-elif c_iv_v > 0.5:
-    dynamic_atm_iv = round(c_iv_v, 2)
-elif p_iv_v > 0.5:
-    dynamic_atm_iv = round(p_iv_v, 2)
+valid_ivs = [iv for iv in [c_iv_v, p_iv_v] if iv > 0.0]
+if valid_ivs:
+    dynamic_atm_iv = round(sum(valid_ivs) / len(valid_ivs), 2)
 else:
-    dynamic_atm_iv = fallback_iv
+    neighbors = disp_df[disp_df['View_Dist'] <= (100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50)]
+    neigh_ivs = [r[col] for _, r in neighbors.iterrows() for col in ['CE IV', 'PE IV'] if r[col] > 0.0]
+    dynamic_atm_iv = round(sum(neigh_ivs) / len(neigh_ivs), 2) if neigh_ivs else 12.0
 
 disp_df = disp_df.drop(columns=['View_Dist'])
 
@@ -172,11 +152,10 @@ filtered_ce_oi_sum = disp_df['Raw_CE_OI'].sum()
 filtered_pe_oi_sum = disp_df['Raw_PE_OI'].sum()
 dynamic_pcr = round(filtered_pe_oi_sum / filtered_ce_oi_sum, 2) if filtered_ce_oi_sum > 0 else 1.0
 
-# Pure Math Norm PDF Function (Replaces Scipy without external dependencies)
+# Pure Math Norm PDF Function for Gamma Flip
 def norm_pdf(x):
     return math.exp(-0.5 * x**2) / math.sqrt(2 * math.pi)
 
-# Standard Quant Formula: Gamma Calculation using pure math
 def calculate_standard_gex(df, spot, iv, lot):
     r = 0.06 
     T = 4 / 365.0 
@@ -230,7 +209,7 @@ with tab1:
     disp_df['Institutional Buildup'] = disp_df.apply(identify_buildup, axis=1)
     clean_display_df = disp_df.drop(columns=['Dist', 'Raw_CE_OI', 'Raw_PE_OI'])
 
-    st.markdown(f"### Option Chain Matrix ({strike_range_mode}) [Zero LTP Strikes Filtered]")
+    st.markdown(f"### Option Chain Matrix ({strike_range_mode}) [Zero LTP Filtered]")
     st.dataframe(clean_display_df, use_container_width=True, height=520, hide_index=True)
 
     st.markdown("### Open Interest Concentration Walls (Support & Resistance)")
@@ -314,7 +293,7 @@ with tab2:
             "Select Table Range", 
             ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
             index=1,
-            key="settle_table_range_selector_noscipy"
+            key="settle_table_range_selector_puredat"
         )
 
     df_pain_full['Dist_Center'] = abs(df_pain_full['Strike'] - live_spot)
@@ -363,7 +342,7 @@ with tab3:
     days_to_expiry = 4 
     time_factor = math.sqrt(days_to_expiry / 365.0)
     
-    iv_to_use = dynamic_atm_iv if dynamic_atm_iv > 0.5 else fallback_iv
+    iv_to_use = dynamic_atm_iv if dynamic_atm_iv > 0.5 else 12.0
     move_1sigma = live_spot * (iv_to_use / 100.0) * time_factor
     upper_1s = live_spot + move_1sigma
     lower_1s = live_spot - move_1sigma
