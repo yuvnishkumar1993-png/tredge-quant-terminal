@@ -33,7 +33,7 @@ all_symbols = get_available_symbols()
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_ultimate_v2")
+selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_ultimate_v3")
 st.session_state.global_symbol = selected_symbol
 
 resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
@@ -44,7 +44,7 @@ strike_range_mode = st.sidebar.radio(
     "Option Chain Strike Range", 
     ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
     index=1,
-    key="strike_range_ultimate_v2"
+    key="strike_range_ultimate_v3"
 )
 
 tab1, tab2, tab3 = st.tabs([
@@ -56,7 +56,7 @@ tab1, tab2, tab3 = st.tabs([
 @st.cache_data(ttl=30)
 def fetch_exact_dhan_option_chain(c_id, token, sec_id, seg, exp, sym):
     if not c_id or not token: 
-        return pd.DataFrame(), 0.0, 0.0, 0.0
+        return pd.DataFrame(), 0.0
     
     url = "https://api.dhan.co/v2/optionchain"
     headers = {"access-token": token.strip(), "client-id": c_id.strip(), "Content-Type": "application/json"}
@@ -69,10 +69,6 @@ def fetch_exact_dhan_option_chain(c_id, token, sec_id, seg, exp, sym):
             oc_map = block.get("oc", {})
             records = []
             
-            total_ce_oi = 0
-            total_pe_oi = 0
-            iv_collection = []
-            
             for s_str, obj in oc_map.items():
                 s_val = float(s_str)
                 ce = obj.get("ce", {})
@@ -83,20 +79,14 @@ def fetch_exact_dhan_option_chain(c_id, token, sec_id, seg, exp, sym):
                 ce_iv = float(ce.get("iv", 0.0))
                 pe_iv = float(ce.get("iv", 0.0))
                 
-                total_ce_oi += ce_oi
-                total_pe_oi += pe_oi
-                
-                if ce_iv > 1.0: iv_collection.append(ce_iv)
-                if pe_iv > 1.0: iv_collection.append(pe_iv)
-                
                 records.append({
                     "CE OI (L)": round(ce_oi / 100000.0, 2),
                     "CE Chg OI": int(ce.get("previous_oi", ce_oi) - ce_oi),
-                    "CE IV": ce_iv if ce_iv > 0 else 13.5,
+                    "CE IV": ce_iv if ce_iv > 0 else (12.5 if sym == "BANKNIFTY" else 13.5),
                     "CE LTP": float(ce.get("last_price", 0.0)),
                     "STRIKE": int(s_val),
                     "PE LTP": float(pe.get("last_price", 0.0)),
-                    "PE IV": pe_iv if pe_iv > 0 else 13.5,
+                    "PE IV": pe_iv if pe_iv > 0 else (12.5 if sym == "BANKNIFTY" else 13.5),
                     "PE OI (L)": round(pe_oi / 100000.0, 2),
                     "Raw_CE_OI": ce_oi,
                     "Raw_PE_OI": pe_oi
@@ -105,24 +95,12 @@ def fetch_exact_dhan_option_chain(c_id, token, sec_id, seg, exp, sym):
             df_out = pd.DataFrame(records)
             if not df_out.empty: 
                 df_out = df_out.sort_values(by="STRIKE").reset_index(drop=True)
-            
-            true_pcr = round(total_pe_oi / total_ce_oi, 2) if total_ce_oi > 0 else 1.0
-            
-            # --- TRUE ATM IV PRECISION ENGINE ---
-            atm_iv = 13.5
-            if not df_out.empty and spot_val > 0:
-                if iv_collection:
-                    # Take median/average of valid market IVs near ATM to eliminate outliers
-                    atm_iv = round(sum(iv_collection) / len(iv_collection), 2)
-                else:
-                    atm_iv = 12.53 if sym == "BANKNIFTY" else (13.4 if sym == "NIFTY" else 16.5)
-
-            return df_out, spot_val, atm_iv, true_pcr
+            return df_out, spot_val
     except Exception:
         pass
-    return pd.DataFrame(), 0.0, 12.53 if sym == "BANKNIFTY" else 13.8, 0.88 if sym == "BANKNIFTY" else 1.05
+    return pd.DataFrame(), 0.0
 
-chain_df, live_spot, exact_atm_iv, exact_pcr = fetch_exact_dhan_option_chain(
+chain_df, live_spot = fetch_exact_dhan_option_chain(
     client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol
 )
 
@@ -130,8 +108,6 @@ chain_df, live_spot, exact_atm_iv, exact_pcr = fetch_exact_dhan_option_chain(
 if chain_df.empty:
     spot_defaults = {"NIFTY": 24500.0, "BANKNIFTY": 50500.0, "FINNIFTY": 23200.0, "SENSEX": 80000.0, "RELIANCE": 2950.0}
     live_spot = spot_defaults.get(selected_symbol, 24500.0)
-    exact_atm_iv = 12.53 if selected_symbol == "BANKNIFTY" else 13.8
-    exact_pcr = 0.88 if selected_symbol == "BANKNIFTY" else 1.05
     
     step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
     atm = round(live_spot / step) * step
@@ -139,17 +115,18 @@ if chain_df.empty:
     
     mock_recs = []
     np.random.seed(42)
+    def_iv = 12.53 if selected_symbol == "BANKNIFTY" else 13.8
     for s in strikes_arr:
         c_oi = np.random.randint(50000, 250000)
         p_oi = np.random.randint(50000, 250000)
         mock_recs.append({
-            "CE OI (L)": round(c_oi/100000, 2), "CE Chg OI": np.random.randint(-15000, 20000), "CE IV": exact_atm_iv, "CE LTP": 50.0, 
-            "STRIKE": int(s), "PE LTP": 50.0, "PE IV": exact_atm_iv, "PE OI (L)": round(p_oi/100000, 2),
+            "CE OI (L)": round(c_oi/100000, 2), "CE Chg OI": np.random.randint(-15000, 20000), "CE IV": def_iv, "CE LTP": 50.0, 
+            "STRIKE": int(s), "PE LTP": 50.0, "PE IV": def_iv, "PE OI (L)": round(p_oi/100000, 2),
             "Raw_CE_OI": c_oi, "Raw_PE_OI": p_oi
         })
     chain_df = pd.DataFrame(mock_recs)
 
-# Strike Range Filtering for Tab 1
+# Strike Range Filtering Logic
 chain_df['Dist'] = abs(chain_df['STRIKE'] - live_spot)
 center_idx = chain_df['Dist'].idxmin()
 
@@ -162,12 +139,32 @@ elif "±30" in strike_range_mode:
 else:
     disp_df = chain_df.copy()
 
+# --- DYNAMIC METRICS CALCULATED STRICTLY BASED ON SELECTED RANGE ---
+filtered_ce_oi_sum = disp_df['Raw_CE_OI'].sum()
+filtered_pe_oi_sum = disp_df['Raw_PE_OI'].sum()
+dynamic_pcr = round(filtered_pe_oi_sum / filtered_ce_oi_sum, 2) if filtered_ce_oi_sum > 0 else 1.0
+
+# Dynamic ATM IV based on the closest strike in the current view
+disp_df['View_Dist'] = abs(disp_df['STRIKE'] - live_spot)
+atm_row_view = disp_df.loc[disp_df['View_Dist'].idxmin()]
+c_iv_v = atm_row_view['CE IV']
+p_iv_v = atm_row_view['PE IV']
+if c_iv_v > 1.0 and p_iv_v > 1.0:
+    dynamic_atm_iv = round((c_iv_v + p_iv_v) / 2.0, 2)
+elif c_iv_v > 1.0:
+    dynamic_atm_iv = round(c_iv_v, 2)
+elif p_iv_v > 1.0:
+    dynamic_atm_iv = round(p_iv_v, 2)
+else:
+    dynamic_atm_iv = 12.53 if selected_symbol == "BANKNIFTY" else 13.8
+disp_df = disp_df.drop(columns=['View_Dist'])
+
 with tab1:
     col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns(5)
     with col_h1: st.metric(label="🌐 Asset", value=selected_symbol)
     with col_h2: st.metric(label="📈 Spot Price", value=f"₹{live_spot:,.2f}")
-    with col_h3: st.metric(label="⚡ ATM IV", value=f"{exact_atm_iv}%", delta="Synced with App")
-    with col_h4: st.metric(label="📊 Aggregate PCR", value=exact_pcr, delta="True OI Ratio")
+    with col_h3: st.metric(label=f"⚡ ATM IV ({strike_range_mode})", value=f"{dynamic_atm_iv}%", delta="Range-Filtered IV")
+    with col_h4: st.metric(label=f"📊 PCR ({strike_range_mode})", value=dynamic_pcr, delta="Range-Filtered OI Ratio")
     with col_h5: st.metric(label="📦 Lot Size", value=lot_size)
 
     st.markdown("---")
@@ -185,18 +182,18 @@ with tab1:
     st.markdown(f"### 📊 Option Chain Matrix | Mode: `{strike_range_mode}`")
     st.dataframe(clean_display_df, use_container_width=True, height=550, hide_index=True)
 
-    # Visual OI Wall Distribution
+    # Visual OI Wall Distribution (Eye-Friendly Theme)
     st.markdown("### 🧱 Institutional Open Interest Walls (Support & Resistance Concentration)")
-    wall_df = chain_df.iloc[max(0, center_idx-15):min(len(chain_df), center_idx+16)].copy()
+    wall_df = disp_df.copy()
     
     fig_wall = go.Figure()
-    fig_wall.add_trace(go.Bar(x=wall_df['STRIKE'], y=wall_df['CE OI (L)'], name="Call OI Wall (Resistance)", marker_color='#f85149'))
+    fig_wall.add_trace(go.Bar(x=wall_df['STRIKE'], y=wall_df['CE OI (L)'], name="Call OI Wall (Resistance)", marker_color='#e5534b'))
     fig_wall.add_trace(go.Bar(x=wall_df['STRIKE'], y=wall_df['PE OI (L)'], name="Put OI Wall (Support)", marker_color='#2ea043'))
-    fig_wall.add_vline(x=live_spot, line_dash="solid", line_color="#ffd33d", annotation_text=f"Spot: ₹{live_spot}")
+    fig_wall.add_vline(x=live_spot, line_dash="solid", line_color="#e3b341", annotation_text=f"Spot: ₹{live_spot}")
     
     fig_wall.update_layout(
         template='plotly_dark',
-        plot_bgcolor='#0d1117',
+        plot_bgcolor='#161b22',   # Soft Charcoal (Non-glaring)
         paper_bgcolor='#0d1117',
         barmode='group',
         title="<b>Strike-wise Open Interest Concentration Walls (Lakhs)</b>",
@@ -232,21 +229,21 @@ with tab2:
 
     df_pain_full = pd.DataFrame([{"Strike": k, "Total Payout/Pain Value": v} for k, v in pain_dict.items()])
     
-    # --- FIXED BRIGHT COLOR BARS FOR SETTLEMENT GRAPH ---
+    # --- EYE-FRIENDLY SOBER CHART THEME (#161b22 Background & Professional Tones) ---
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=df_pain_full['Strike'], 
         y=df_pain_full['Total Payout/Pain Value'],
         name="Settlement Payout Pain",
-        marker_color=['#2ea043' if s == max_pain else '#1f6feb' for s in df_pain_full['Strike']]
+        marker_color=['#2ea043' if s == max_pain else '#388bfd' for s in df_pain_full['Strike']]
     ))
     
     fig.add_vline(x=max_pain, line_dash="dash", line_color="#2ea043", annotation_text=f"Max Pain: ₹{max_pain}", annotation_position="top left")
-    fig.add_vline(x=live_spot, line_dash="solid", line_color="#ffd33d", annotation_text=f"Spot: ₹{live_spot}", annotation_position="top right")
+    fig.add_vline(x=live_spot, line_dash="solid", line_color="#e3b341", annotation_text=f"Spot: ₹{live_spot}", annotation_position="top right")
     
     fig.update_layout(
         template='plotly_dark',
-        plot_bgcolor='#0d1117',
+        plot_bgcolor='#161b22',   # Soft Charcoal background to protect eyes
         paper_bgcolor='#0d1117',
         title="<b>Gravitational Payout Pain Distribution Curve</b>",
         xaxis_title="Strike Prices",
@@ -265,7 +262,7 @@ with tab2:
             "Select Settlement Table Range", 
             ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
             index=1,
-            key="settle_table_range_selector_v3"
+            key="settle_table_range_selector_v4"
         )
 
     df_pain_full['Dist_Center'] = abs(df_pain_full['Strike'] - live_spot)
@@ -308,22 +305,17 @@ with tab2:
 with tab3:
     st.markdown(f"### 🚀 Expected Move: 1-Sigma & 2-Sigma Volatility Probability Bands (`{selected_symbol}`)")
     
-    # --- ADVANCED FEATURE: 1-SIGMA & 2-SIGMA EXPECTED MOVE CALCULATION ---
-    # Formula: Expected Move = Spot * (ATM IV / 100) * SQRT(Days to Expiry / 365)
-    days_to_expiry = 4 # Estimated active weekly expiry days
+    days_to_expiry = 4 
     time_factor = math.sqrt(days_to_expiry / 365.0)
     
-    # 1-Sigma = 68.2% Probability Band
-    move_1sigma = live_spot * (exact_atm_iv / 100.0) * time_factor
+    move_1sigma = live_spot * (dynamic_atm_iv / 100.0) * time_factor
     upper_1s = live_spot + move_1sigma
     lower_1s = live_spot - move_1sigma
     
-    # 2-Sigma = 95.4% Probability Band
     move_2sigma = move_1sigma * 2.0
     upper_2s = live_spot + move_2sigma
     lower_2s = live_spot - move_2sigma
     
-    # Displaying 1-Sigma Metrics
     st.markdown("#### 🟢 1-Sigma Expected Move (68.2% Statistical Confidence)")
     s1_c1, s1_c2, s1_c3 = st.columns(3)
     with s1_c1: st.metric(label="1-Sigma Range (±)", value=f"₹{move_1sigma:,.2f}", delta="Standard Deviation Band")
@@ -332,7 +324,6 @@ with tab3:
 
     st.markdown("---")
 
-    # Displaying 2-Sigma Metrics
     st.markdown("#### 🔵 2-Sigma Expected Move (95.4% Statistical Confidence — Extreme Bounds)")
     s2_c1, s2_c2, s2_c3 = st.columns(3)
     with s2_c1: st.metric(label="2-Sigma Range (±)", value=f"₹{move_2sigma:,.2f}", delta="Wide Volatility Band")
@@ -342,6 +333,5 @@ with tab3:
     st.markdown("""
     ---
     ### 💡 Professional Volatility Sigma Guide:
-    * **1-Sigma Band (68.2%):** Market will stay within this range 7 out of 10 times by expiry. Perfect for selling short straddles or iron condors *just outside* these bounds.
-    * **2-Sigma Band (95.4%):** Extreme statistical boundary. Breaching 2-Sigma usually indicates macro news, a breakout, or heavy institutional short-covering.
+    * **Range-Filtered ATM IV:** The ATM IV and Expected Move calculations above now dynamically adapt to your selected strike range ($\pm 10, \pm 20, \text{Full Chain}$).
     """)
