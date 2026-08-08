@@ -21,12 +21,12 @@ except ImportError:
     def get_asset_details_from_master(sym):
         return (13, "IDX_I", 65) if sym.upper() == "NIFTY" else (2885, "NSE_FNO", 250)
     def fetch_live_expiries(c, t, s, seg):
-        return ["2026-08-13", "2026-08-20", "2026-08-27"]
+        return ["2026-08-13", "2026-08-20"]
     def get_available_symbols():
         return ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "SBIN"]
 
-st.set_page_config(page_title="Elite Quantitative IV & Volatility Terminal", page_icon="⚡", layout="wide")
-st.markdown("## ⚡ Elite Quantitative IV Skew, Term Structure & Automated Signals Terminal")
+st.set_page_config(page_title="Master-Synced Quantitative IV Terminal", page_icon="⚡", layout="wide")
+st.markdown("## ⚡ Master-Synced Quantitative IV Skew, Smile & Automated Signals Terminal")
 st.markdown("---")
 
 init_global_state()
@@ -34,10 +34,10 @@ all_symbols = get_available_symbols()
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="iv_elite_sym_safe")
+selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="iv_master_sym")
 st.session_state.global_symbol = selected_symbol
 
-# Master Fetch with Lot Size Control
+# 1. Master Fetch (Pulls exact Security ID, Segment and Lot Size from Master CSV)
 resolved_sec_id, resolved_seg, master_lot = get_asset_details_from_master(selected_symbol)
 
 st.sidebar.markdown("---")
@@ -48,14 +48,14 @@ lot_size = st.sidebar.number_input(
     max_value=10000, 
     value=int(master_lot), 
     step=1,
-    key=f"iv_elite_lot_safe_{selected_symbol}",
+    key=f"iv_master_lot_{selected_symbol}",
     help="मास्टर फाइल से सिंक्ड लॉट साइज़।"
 )
 
 expiries = fetch_live_expiries(client_id, access_token, resolved_sec_id, resolved_seg)
 if not expiries:
-    expiries = ["2026-08-13", "2026-08-20"]
-selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="iv_elite_exp_safe")
+    expiries = ["2026-08-13"]
+selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="iv_master_exp")
 
 # --- QUANTITATIVE BLACK-SCHOLES & GREEKS ENGINE ---
 def standard_normal_cdf(x):
@@ -102,10 +102,11 @@ def calculate_implied_volatility(market_price, S, K, T, r=0.06, option_type='CE'
             sigma = 0.01
     return round(sigma * 100.0, 2)
 
-@st.cache_data(ttl=60)
-def fetch_elite_iv_data_safe(c_id, token, sec_id, seg, exp):
+@st.cache_data(ttl=30)
+def fetch_master_synced_iv_data(c_id, token, sec_id, seg, exp, sym):
+    fallback_spot = 50500.0 if "BANK" in sym.upper() else (24500.0 if "NIFTY" in sym.upper() else 2500.0)
     if not c_id or not token: 
-        return pd.DataFrame(), 0.0, 0.0
+        return pd.DataFrame(), fallback_spot
         
     try:
         exp_date = datetime.datetime.strptime(exp, "%Y-%m-%d").date()
@@ -121,11 +122,15 @@ def fetch_elite_iv_data_safe(c_id, token, sec_id, seg, exp):
         if res.status_code == 200:
             res_json = res.json()
             block = res_json.get("data", {})
-            spot_val = float(block.get("last_price") or block.get("lp") or block.get("ltp") or block.get("underlying_price") or 0.0)
-            oc_map = block.get("oc", {})
             
-            if spot_val <= 0 or not oc_map:
-                return pd.DataFrame(), 0.0, 0.0
+            # Robust Spot Extraction identical to Main Option Chain
+            spot_val = float(block.get("last_price") or block.get("lp") or block.get("ltp") or block.get("underlying_price") or 0.0)
+            if spot_val <= 0:
+                spot_val = fallback_spot
+                
+            oc_map = block.get("oc", {})
+            if not oc_map:
+                return pd.DataFrame(), spot_val
 
             records = []
             for s_str, obj in oc_map.items():
@@ -143,8 +148,8 @@ def fetch_elite_iv_data_safe(c_id, token, sec_id, seg, exp):
                 if pe_iv <= 1.0 and pe_ltp > 0:
                     pe_iv = calculate_implied_volatility(pe_ltp, spot_val, s_val, T, r=0.06, option_type='PE')
 
-                _, c_delta, c_gamma, c_vega, c_vanna, c_volga = black_scholes_price_and_greeks(spot_val, s_val, T, 0.06, ce_iv/100.0, 'CE')
-                _, p_delta, p_gamma, p_vega, p_vanna, p_volga = black_scholes_price_and_greeks(spot_val, s_val, T, 0.06, pe_iv/100.0, 'PE')
+                _, c_delta, c_gamma, c_vega, c_vanna, c_volga = black_scholes_price_and_greeks(spot_val, s_val, T, 0.06, ce_iv/100.0 if ce_iv > 0 else 0.15, 'CE')
+                _, p_delta, p_gamma, p_vega, p_vanna, p_volga = black_scholes_price_and_greeks(spot_val, s_val, T, 0.06, pe_iv/100.0 if pe_iv > 0 else 0.15, 'PE')
 
                 records.append({
                     "Strike": int(s_val),
@@ -161,20 +166,16 @@ def fetch_elite_iv_data_safe(c_id, token, sec_id, seg, exp):
             df_out = pd.DataFrame(records)
             if not df_out.empty:
                 df_out = df_out.sort_values(by="Strike").reset_index(drop=True)
-            
-            mean_iv = df_out[(df_out['Call IV (%)'] > 0)]['Call IV (%)'].mean()
-            realized_vol = max(10.0, mean_iv - 2.5) if not math.isnan(mean_iv) else 15.0
-            
-            return df_out, spot_val, realized_vol
+            return df_out, spot_val
     except Exception:
         pass
-    return pd.DataFrame(), 0.0, 0.0
+    return pd.DataFrame(), fallback_spot
 
-df_iv, live_spot, realized_vol = fetch_elite_iv_data_safe(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry)
+df_iv, live_spot = fetch_master_synced_iv_data(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol)
 
 if df_iv.empty or live_spot <= 0.0:
     step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
-    live_spot = 24500.0 if selected_symbol == "NIFTY" else (50500.0 if selected_symbol == "BANKNIFTY" else 2500.0)
+    live_spot = 50500.0 if selected_symbol == "BANKNIFTY" else (24500.0 if selected_symbol == "NIFTY" else 2500.0)
     atm = round(live_spot / step) * step
     strikes = [atm + (i * step) for i in range(-15, 16)]
     
@@ -194,7 +195,8 @@ if df_iv.empty or live_spot <= 0.0:
             "PE LTP": 110.0
         })
     df_iv = pd.DataFrame(mock_recs)
-    realized_vol = 12.5
+
+realized_vol = 12.5
 
 # --- SAFE INDEXING GUARD ---
 df_iv['Dist'] = abs(df_iv['Strike'] - live_spot)
@@ -228,19 +230,19 @@ def generate_quantitative_signal(rr, spread, atm_iv):
         return {
             "bias": "🚨 High Panic / Extreme Put Buying (Bearish Hedging)",
             "action": "Buy Protective Puts / Hedged Bear Spread",
-            "desc": "25-Delta Risk Reversal बहुत ज्यादा पॉजिटिव है और IV, RV से काफी ऊपर है। इंस्टीट्यूशंस बाजार में नीचे के क्रैश से बचने के लिए भारी मात्रा में पुट खरीद रहे हैं।"
+            "desc": "25-Delta Risk Reversal पॉजिटिव है। इंस्टीट्यूशंस क्रैश से बचने के लिए पुट खरीद रहे हैं।"
         }
     elif rr < -1.0 and spread < 0:
         return {
             "bias": "🚀 Call Greed / Aggressive Upside Momentum (Bullish)",
             "action": "Buy Dips / Bull Call Spread",
-            "desc": "कॉल साइड की वोलाटिलिटी और मांग पुट से ज्यादा है। ट्रेडर्स ऊपर के स्तरों के लिए एग्रेसिवली कॉल्स खरीद रहे हैं।"
+            "desc": "कॉल साइड की वोलाटिलिटी और मांग पुट से ज्यादा है। बाजार में तेजी का जोरदार रुझान है।"
         }
     elif atm_iv < 12.0:
         return {
             "bias": "💤 Low Volatility Regime (Option Selling Edge)",
             "action": "Short Strangle / Iron Condor / Theta Decay",
-            "desc": "IV बेहद कम है। ऑप्शन सेलर्स (Short Volatility) के लिए बड़ा मुनाफा कमाने का सुनहरा मौका है।"
+            "desc": "IV बेहद कम है। ऑप्शन सेलर्स (Short Volatility) के लिए बड़ा मुनाफा कमाने का मौका है।"
         }
     else:
         return {
@@ -289,7 +291,7 @@ with tab1:
 
 with tab2:
     st.markdown("### 📊 Volatility Term Structure (Multi-Expiry IV Curve)")
-    st.info("विभिन्न एक्सपायरी तारीखों के बीच ATM Implied Volatility का तुलनात्मक अध्ययन (Term Structure)।")
+    st.info("विभिन्न एक्सपायरी तारीखों के बीच ATM Implied Volatility का तुलनात्मक अध्ययन।")
     
     term_records = []
     for exp_date_str in expiries[:4]:
@@ -321,13 +323,13 @@ with tab3:
         * **Implied Vol (IV):** {avg_call_iv:.2f}%
         * **Realized Vol (RV):** {realized_vol:.2f}%
         * **IV - RV Spread:** {iv_rv_spread:+.2f}%
-        * **Interpretation:** यदि IV, RV से ऊपर है, तो ऑप्शन प्रीमियम ओवरप्राइस्ड हैं (डिराइवेटिव्स सेलिंग एज)। यदि IV, RV से कम है, तो ऑप्शन अंडरप्राइस्ड हैं (लॉन्ग वोलाटिलिटी एज)।
+        * **Interpretation:** यदि IV, RV से ऊपर है, तो ऑप्शन प्रीमियम ओवरप्राइस्ड हैं (सेलिंग एज)।
         """)
     with col_g2:
         st.info("""
         **📌 Higher-Order Greeks Context:**
-        * **Vanna:** IV बदलने पर डेल्टा में बदलाव (हेज़िंग रीबैलेंसिंग)।
-        * **Volga (Vega Convexity):** IV बदलने पर Vega खुद कैसे बदलता है।
+        * **Vanna:** IV बदलने पर डेल्टा में बदलाव।
+        * **Volga (Vega Convexity):** IV बदलने पर Vega में बदलाव।
         """)
         
     st.markdown("---")
