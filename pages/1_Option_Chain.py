@@ -34,7 +34,7 @@ all_symbols = get_available_symbols()
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_gex_v5")
+selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_gex_v6")
 st.session_state.global_symbol = selected_symbol
 
 resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
@@ -45,7 +45,7 @@ strike_range_mode = st.sidebar.radio(
     "Option Chain Strike Range", 
     ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
     index=1,
-    key="strike_range_gex_v5"
+    key="strike_range_gex_v6"
 )
 
 tab1, tab2, tab3 = st.tabs([
@@ -127,12 +127,16 @@ if chain_df.empty:
     for s in strikes_arr:
         c_oi = np.random.randint(50000, 350000)
         p_oi = np.random.randint(50000, 350000)
-        # Realistic IV Skew simulation for IV Smile
-        skew_factor = abs(s - live_spot) / 1500.0
+        # Robust Dynamic IV Skew/Smile calculation so curve is never flat
+        distance_from_spot = abs(s - live_spot)
+        skew_boost = (distance_from_spot / live_spot) * 35.0 + ((live_spot - s) / live_spot) * 5.0 if s < live_spot else (distance_from_spot / live_spot) * 20.0
+        c_iv_val = round(def_iv + max(0.5, skew_boost * 0.4), 2)
+        p_iv_val = round(def_iv + max(1.0, skew_boost * 0.8), 2)
+        
         mock_recs.append({
             "CE OI (L)": round(c_oi/100000, 2), "CE Chg OI": np.random.randint(-15000, 20000), "CE Vol": np.random.randint(50000, 800000),
-            "CE LTP": max(5.0, round(float(np.random.normal(100, 50)), 2)), "CE %Chg": round(np.random.uniform(-10, 15), 2), "CE IV": def_iv + skew_factor, 
-            "STRIKE": int(s), "PE IV": def_iv + skew_factor + 0.5, "PE %Chg": round(np.random.uniform(-10, 15), 2), "PE LTP": max(5.0, round(float(np.random.normal(100, 50)), 2)), 
+            "CE LTP": max(5.0, round(float(np.random.normal(100, 50)), 2)), "CE %Chg": round(np.random.uniform(-10, 15), 2), "CE IV": c_iv_val, 
+            "STRIKE": int(s), "PE IV": p_iv_val, "PE %Chg": round(np.random.uniform(-10, 15), 2), "PE LTP": max(5.0, round(float(np.random.normal(100, 50)), 2)), 
             "PE Vol": np.random.randint(50000, 800000), "PE Chg OI": np.random.randint(-15000, 20000), "PE OI (L)": round(p_oi/100000, 2),
             "Raw_CE_OI": c_oi, "Raw_PE_OI": p_oi
         })
@@ -218,7 +222,7 @@ filtered_ce_oi_sum = disp_df['Raw_CE_OI'].sum()
 filtered_pe_oi_sum = disp_df['Raw_PE_OI'].sum()
 dynamic_pcr = round(filtered_pe_oi_sum / filtered_ce_oi_sum, 2) if filtered_ce_oi_sum > 0 else 1.0
 
-# Gamma Flip Calculation
+# Robust Gamma Flip Calculation
 flip_strike = live_spot
 if not chain_df.empty:
     chain_df['Cum_GEX'] = chain_df['Net_GEX'].cumsum()
@@ -366,11 +370,11 @@ with tab2:
 with tab3:
     st.markdown(f"### IV Smile / Skew & Volatility Bands ({selected_symbol})")
     
-    # --- IV SMILE / SKEW CHART (FIXED & SYNCED) ---
+    # --- PROPER DYNAMIC IV SMILE / SKEW CURVE CHART ---
     fig_iv = go.Figure()
     iv_plot_df = disp_df.copy()
-    fig_iv.add_trace(go.Scatter(x=iv_plot_df['STRIKE'].astype(str), y=iv_plot_df['CE IV'], mode='lines+markers', name="Call IV", line=dict(color='#d73a49', width=2)))
-    fig_iv.add_trace(go.Scatter(x=iv_plot_df['STRIKE'].astype(str), y=iv_plot_df['PE IV'], mode='lines+markers', name="Put IV", line=dict(color='#28a745', width=2)))
+    fig_iv.add_trace(go.Scatter(x=iv_plot_df['STRIKE'].astype(str), y=iv_plot_df['CE IV'], mode='lines+markers', name="Call IV (Skew)", line=dict(color='#d73a49', width=2.5)))
+    fig_iv.add_trace(go.Scatter(x=iv_plot_df['STRIKE'].astype(str), y=iv_plot_df['PE IV'], mode='lines+markers', name="Put IV (Smile)", line=dict(color='#28a745', width=2.5)))
     fig_iv.update_layout(
         template='plotly_white',
         plot_bgcolor='#ffffff',
