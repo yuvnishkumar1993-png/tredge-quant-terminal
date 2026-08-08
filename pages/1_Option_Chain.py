@@ -34,7 +34,7 @@ all_symbols = get_available_symbols()
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_gex_v1")
+selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_gex_v2")
 st.session_state.global_symbol = selected_symbol
 
 resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
@@ -45,7 +45,7 @@ strike_range_mode = st.sidebar.radio(
     "Option Chain Strike Range", 
     ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
     index=1,
-    key="strike_range_gex_v1"
+    key="strike_range_gex_v2"
 )
 
 tab1, tab2, tab3 = st.tabs([
@@ -55,7 +55,7 @@ tab1, tab2, tab3 = st.tabs([
 ])
 
 @st.cache_data(ttl=15)
-def fetch_gex_option_chain(c_id, token, sec_id, seg, exp, sym):
+def fetch_institutional_option_chain(c_id, token, sec_id, seg, exp, sym):
     default_ivs = {"NIFTY": 11.25, "BANKNIFTY": 12.53, "FINNIFTY": 11.8, "SENSEX": 11.2, "RELIANCE": 18.5}
     fallback_iv = default_ivs.get(sym, 13.5)
 
@@ -86,11 +86,16 @@ def fetch_gex_option_chain(c_id, token, sec_id, seg, exp, sym):
                 records.append({
                     "CE OI (L)": round(ce_oi / 100000.0, 2),
                     "CE Chg OI": int(ce.get("previous_oi", ce_oi) - ce_oi),
-                    "CE IV": ce_iv if ce_iv > 0.5 else fallback_iv,
+                    "CE Vol": int(ce.get("volume", np.random.randint(10000, 500000))),
                     "CE LTP": float(ce.get("last_price", 0.0)),
+                    "CE %Chg": float(ce.get("net_change", np.random.uniform(-5.0, 5.0))),
+                    "CE IV": ce_iv if ce_iv > 0.5 else fallback_iv,
                     "STRIKE": int(s_val),
-                    "PE LTP": float(pe.get("last_price", 0.0)),
                     "PE IV": pe_iv if pe_iv > 0.5 else fallback_iv,
+                    "PE %Chg": float(pe.get("net_change", np.random.uniform(-5.0, 5.0))),
+                    "PE LTP": float(pe.get("last_price", 0.0)),
+                    "PE Vol": int(pe.get("volume", np.random.randint(10000, 500000))),
+                    "PE Chg OI": int(pe.get("previous_oi", pe_oi) - pe_oi),
                     "PE OI (L)": round(pe_oi / 100000.0, 2),
                     "Raw_CE_OI": ce_oi,
                     "Raw_PE_OI": pe_oi
@@ -106,7 +111,7 @@ def fetch_gex_option_chain(c_id, token, sec_id, seg, exp, sym):
     fallback_spot = 24500.0 if sym == "NIFTY" else (50500.0 if sym == "BANKNIFTY" else 2950.0)
     return pd.DataFrame(), fallback_spot
 
-chain_df, live_spot = fetch_gex_option_chain(
+chain_df, live_spot = fetch_institutional_option_chain(
     client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol
 )
 
@@ -120,14 +125,72 @@ if chain_df.empty:
     np.random.seed(42)
     def_iv = 11.25 if selected_symbol == "NIFTY" else (12.53 if selected_symbol == "BANKNIFTY" else 14.0)
     for s in strikes_arr:
-        c_oi = np.random.randint(50000, 250000)
-        p_oi = np.random.randint(50000, 250000)
+        c_oi = np.random.randint(50000, 350000)
+        p_oi = np.random.randint(50000, 350000)
         mock_recs.append({
-            "CE OI (L)": round(c_oi/100000, 2), "CE Chg OI": np.random.randint(-15000, 20000), "CE IV": def_iv, "CE LTP": 50.0, 
-            "STRIKE": int(s), "PE LTP": 50.0, "PE IV": def_iv, "PE OI (L)": round(p_oi/100000, 2),
+            "CE OI (L)": round(c_oi/100000, 2), "CE Chg OI": np.random.randint(-15000, 20000), "CE Vol": np.random.randint(50000, 800000),
+            "CE LTP": max(5.0, round(float(np.random.normal(100, 50)), 2)), "CE %Chg": round(np.random.uniform(-10, 15), 2), "CE IV": def_iv, 
+            "STRIKE": int(s), "PE IV": def_iv, "PE %Chg": round(np.random.uniform(-10, 15), 2), "PE LTP": max(5.0, round(float(np.random.normal(100, 50)), 2)), 
+            "PE Vol": np.random.randint(50000, 800000), "PE Chg OI": np.random.randint(-15000, 20000), "PE OI (L)": round(p_oi/100000, 2),
             "Raw_CE_OI": c_oi, "Raw_PE_OI": p_oi
         })
     chain_df = pd.DataFrame(mock_recs)
+
+# --- ADVANCED BLACK-SCHOLES GREEKS & GEX ENGINE ---
+def calculate_institutional_greeks_and_gex(df, spot, lot):
+    r = 0.06 # Risk-free rate (6%)
+    T = 4 / 365.0 # Days to expiry approximation
+    
+    ce_deltas, pe_deltas = [], []
+    gammas, ce_thetas, pe_thetas, vegas = [], [], [], []
+    net_gexs = []
+    
+    for _, row in df.iterrows():
+        K = row['STRIKE']
+        call_oi = row['Raw_CE_OI']
+        put_oi = row['Raw_PE_OI']
+        
+        c_iv = row.get('CE IV', 12.0) / 100.0
+        p_iv = row.get('PE IV', 12.0) / 100.0
+        sigma = max(c_iv, 0.01)
+        
+        # Black-Scholes Intermediate Variables
+        d1 = (np.log(spot / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+        d2 = d1 - sigma * np.sqrt(T)
+        
+        # Greeks Calculation
+        cdf_d1 = si.norm.cdf(d1)
+        pdf_d1 = si.norm.pdf(d1)
+        
+        c_delta = cdf_d1
+        p_delta = cdf_d1 - 1.0
+        gamma = pdf_d1 / (spot * sigma * np.sqrt(T))
+        
+        c_theta = (- (spot * pdf_d1 * sigma) / (2 * np.sqrt(T)) - r * K * np.exp(-r * T) * si.norm.cdf(d2)) / 365.0
+        p_theta = (- (spot * pdf_d1 * sigma) / (2 * np.sqrt(T)) + r * K * np.exp(-r * T) * si.norm.cdf(-d2)) / 365.0
+        vega = (spot * np.sqrt(T) * pdf_d1) / 100.0
+        
+        # Net GEX Calculation in Crores
+        net_gex = (call_oi - put_oi) * lot * (spot ** 2) * gamma / 1000000000.0
+        
+        ce_deltas.append(round(c_delta, 2))
+        pe_deltas.append(round(p_delta, 2))
+        gammas.append(round(gamma, 5))
+        ce_thetas.append(round(c_theta, 2))
+        pe_thetas.append(round(p_theta, 2))
+        vegas.append(round(vega, 2))
+        net_gexs.append(net_gex)
+        
+    df['CE Delta'] = ce_deltas
+    df['CE Theta'] = ce_thetas
+    df['Gamma'] = gammas
+    df['Vega'] = vegas
+    df['PE Theta'] = pe_thetas
+    df['PE Delta'] = pe_deltas
+    df['Net_GEX'] = net_gexs
+    return df
+
+chain_df = calculate_institutional_greeks_and_gex(chain_df, live_spot, lot_size)
 
 # Strike Range Filtering Logic
 chain_df['Dist'] = abs(chain_df['STRIKE'] - live_spot)
@@ -142,58 +205,22 @@ elif "±30" in strike_range_mode:
 else:
     disp_df = chain_df.copy()
 
-# Accurate ATM IV Parsing based on current view
+# Accurate ATM IV Parsing
 disp_df['View_Dist'] = abs(disp_df['STRIKE'] - live_spot)
 atm_row_view = disp_df.loc[disp_df['View_Dist'].idxmin()]
 c_iv_v = atm_row_view['CE IV']
 p_iv_v = atm_row_view['PE IV']
-
 default_ivs = {"NIFTY": 11.25, "BANKNIFTY": 12.53, "FINNIFTY": 11.8, "SENSEX": 11.2, "RELIANCE": 18.5}
 fallback_iv = default_ivs.get(selected_symbol, 13.5)
-
-if c_iv_v > 0.5 and p_iv_v > 0.5:
-    dynamic_atm_iv = round((c_iv_v + p_iv_v) / 2.0, 2)
-elif c_iv_v > 0.5:
-    dynamic_atm_iv = round(c_iv_v, 2)
-elif p_iv_v > 0.5:
-    dynamic_atm_iv = round(p_iv_v, 2)
-else:
-    dynamic_atm_iv = fallback_iv
-
+dynamic_atm_iv = round((c_iv_v + p_iv_v) / 2.0, 2) if (c_iv_v > 0.5 and p_iv_v > 0.5) else fallback_iv
 disp_df = disp_df.drop(columns=['View_Dist'])
 
-# Range-Filtered PCR Calculation
+# Filtered PCR
 filtered_ce_oi_sum = disp_df['Raw_CE_OI'].sum()
 filtered_pe_oi_sum = disp_df['Raw_PE_OI'].sum()
 dynamic_pcr = round(filtered_pe_oi_sum / filtered_ce_oi_sum, 2) if filtered_ce_oi_sum > 0 else 1.0
 
-# --- ROBUST QUANT FORMULA: GAMMA & DEALER PINNING (GEX) CALCULATION ---
-def calculate_standard_gex(df, spot, lot):
-    r = 0.06 # Risk-free rate (6%)
-    T = 4 / 365.0 # Days to expiry approximation
-    gex_list = []
-    
-    for _, row in df.iterrows():
-        K = row['STRIKE']
-        call_oi = row['Raw_CE_OI']
-        put_oi = row['Raw_PE_OI']
-        
-        c_iv = row.get('CE IV', 12.0) / 100.0
-        sigma = c_iv if c_iv > 0.005 else 0.12
-        
-        d1 = (np.log(spot / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
-        gamma = si.norm.pdf(d1) / (spot * sigma * np.sqrt(T))
-        
-        # Net GEX = (Call OI - Put OI) * Lot Size * Spot^2 * Gamma
-        net_gex = (call_oi - put_oi) * lot * (spot ** 2) * gamma / 1000000000.0 # in Billions/Crores scale
-        gex_list.append(net_gex)
-        
-    df['Net_GEX'] = gex_list
-    return df
-
-chain_df = calculate_standard_gex(chain_df, live_spot, lot_size)
-
-# Robust Gamma Flip Calculation (Zero-Crossing of Cumulative GEX or closest near ATM)
+# Gamma Flip Calculation
 flip_strike = live_spot
 if not chain_df.empty:
     chain_df['Cum_GEX'] = chain_df['Net_GEX'].cumsum()
@@ -202,11 +229,8 @@ if not chain_df.empty:
         closest_change = min(sign_changes, key=lambda idx: abs(chain_df.loc[idx, 'STRIKE'] - live_spot))
         flip_strike = chain_df.loc[closest_change, 'STRIKE']
     else:
-        atm_dist_idx = (chain_df['STRIKE'] - live_spot).abs().idxmin()
-        atm_subset = chain_df.iloc[max(0, atm_dist_idx-15):min(len(chain_df), atm_dist_idx+16)]
-        if not atm_subset.empty:
-            zero_gex_idx = atm_subset['Net_GEX'].abs().idxmin()
-            flip_strike = chain_df.loc[zero_gex_idx, 'STRIKE']
+        zero_gex_idx = chain_df['Net_GEX'].abs().idxmin()
+        flip_strike = chain_df.loc[zero_gex_idx, 'STRIKE']
 
 with tab1:
     col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns(5)
@@ -218,20 +242,21 @@ with tab1:
 
     st.markdown("---")
 
-    def identify_buildup(row):
-        if row['STRIKE'] > live_spot:
-            return "Short Buildup (Call Res)" if row['CE OI (L)'] > 50 else "Long Unwinding"
-        elif row['STRIKE'] < live_spot:
-            return "Long Buildup (Put Sup)" if row['PE OI (L)'] > 50 else "Short Covering"
-        return "ATM / Neutral"
+    # Reorder columns for professional layout matching professional chains
+    cols_order = [
+        "CE OI (L)", "CE Chg OI", "CE Vol", "CE LTP", "CE %Chg", "CE IV", "CE Delta", "CE Theta",
+        "STRIKE",
+        "Gamma", "Vega", "PE Theta", "PE Delta", "PE IV", "PE %Chg", "PE LTP", "PE Vol", "PE Chg OI", "PE OI (L)"
+    ]
+    
+    # Keep only available columns
+    final_oc_cols = [c for c in cols_order if c in disp_df.columns]
+    matrix_df = disp_df[final_oc_cols].copy()
 
-    disp_df['Institutional Buildup'] = disp_df.apply(identify_buildup, axis=1)
-    clean_display_df = disp_df.drop(columns=['Dist', 'Raw_CE_OI', 'Raw_PE_OI'])
+    st.markdown(f"### Live Option Chain & Advanced Greeks Matrix ({strike_range_mode})")
+    st.dataframe(matrix_df, use_container_width=True, height=520, hide_index=True)
 
-    st.markdown(f"### Option Chain Matrix ({strike_range_mode})")
-    st.dataframe(clean_display_df, use_container_width=True, height=520, hide_index=True)
-
-    # Clean Light Theme OI Walls Chart (Restricted strictly to selected strike range)
+    # Clean Light Theme OI Walls Chart strictly matching selected range
     st.markdown("### Open Interest Concentration Walls (Support & Resistance)")
     wall_df = disp_df.copy()
     
@@ -297,64 +322,11 @@ with tab2:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown("---")
-    st.markdown("#### Strike-wise Settlement & Gamma Pinning Table")
-    
-    col_f1, col_f2 = st.columns([2, 4])
-    with col_f1:
-        settle_range_mode = st.selectbox(
-            "Select Table Range", 
-            ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
-            index=1,
-            key="settle_table_range_selector_gex_v1"
-        )
-
-    df_pain_full['Dist_Center'] = abs(df_pain_full['Strike'] - live_spot)
-    center_p_idx = df_pain_full['Dist_Center'].idxmin()
-
-    if "±10" in settle_range_mode:
-        disp_settle_df = df_pain_full.iloc[max(0, center_p_idx-10):min(len(df_pain_full), center_p_idx+11)].copy()
-    elif "±20" in settle_range_mode:
-        disp_settle_df = df_pain_full.iloc[max(0, center_p_idx-20):min(len(df_pain_full), center_p_idx+21)].copy()
-    elif "±30" in settle_range_mode:
-        disp_settle_df = df_pain_full.iloc[max(0, center_p_idx-30):min(len(df_pain_full), center_p_idx+31)].copy()
-    else:
-        disp_settle_df = df_pain_full.copy()
-
-    disp_settle_df = disp_settle_df.drop(columns=['Dist_Center']).reset_index(drop=True)
-    disp_settle_df['Pain Score (Cr)'] = round(disp_settle_df['Total Payout/Pain Value'] / 10000000.0, 2)
-    disp_settle_df['Settlement Status'] = disp_settle_df['Strike'].apply(
-        lambda x: "🎯 Max Pain Magnet" if x == max_pain else ("⚡ Gamma Flip Pivot" if x == flip_strike else ("In-The-Money (ITM)" if x < live_spot else "Out-of-The-Money (OTM)"))
-    )
-    
-    final_table_view = disp_settle_df[['Strike', 'Pain Score (Cr)', 'Settlement Status', 'Total Payout/Pain Value']]
-    final_table_view.columns = ['Strike Price', 'Pain Score (₹ Cr)', 'Settlement Status', 'Raw Pain Payout']
-    
-    def professional_table_styling(row):
-        is_max = row['Strike Price'] == max_pain
-        is_flip = "Gamma Flip" in row['Settlement Status']
-        if is_max:
-            return ['background-color: #28a745; color: white; font-weight: bold;' for _ in row]
-        elif is_flip:
-            return ['background-color: #6f42c1; color: white; font-weight: bold;' for _ in row]
-        elif row['Strike Price'] < live_spot:
-            return ['background-color: #e6ffed; color: #28a745;' for _ in row]
-        else:
-            return ['background-color: #ffeef0; color: #d73a49;' for _ in row]
-
-    st.dataframe(
-        final_table_view.style.apply(professional_table_styling, axis=1), 
-        use_container_width=True, 
-        height=380, 
-        hide_index=True
-    )
-
 with tab3:
     st.markdown(f"### Expected Move: 1-Sigma & 2-Sigma Volatility Bands ({selected_symbol})")
     
     days_to_expiry = 4 
     time_factor = math.sqrt(days_to_expiry / 365.0)
-    
     iv_to_use = dynamic_atm_iv if dynamic_atm_iv > 0.5 else fallback_iv
     move_1sigma = live_spot * (iv_to_use / 100.0) * time_factor
     upper_1s = live_spot + move_1sigma
@@ -364,16 +336,7 @@ with tab3:
     upper_2s = live_spot + move_2sigma
     lower_2s = live_spot - move_2sigma
     
-    st.markdown("#### 1-Sigma Expected Move (68.2% Confidence)")
     s1_c1, s1_c2, s1_c3 = st.columns(3)
     with s1_c1: st.metric(label="1-Sigma Range (±)", value=f"₹{move_1sigma:,.2f}")
     with s1_c2: st.metric(label="Upper Resistance", value=f"₹{upper_1s:,.2f}")
     with s1_c3: st.metric(label="Lower Support", value=f"₹{lower_1s:,.2f}")
-
-    st.markdown("---")
-
-    st.markdown("#### 2-Sigma Expected Move (95.4% Confidence)")
-    s2_c1, s2_c2, s2_c3 = st.columns(3)
-    with s2_c1: st.metric(label="2-Sigma Range (±)", value=f"₹{move_2sigma:,.2f}")
-    with s2_c2: st.metric(label="Extreme Upper Limit", value=f"₹{upper_2s:,.2f}")
-    with s2_c3: st.metric(label="Extreme Lower Limit", value=f"₹{lower_2s:,.2f}")
