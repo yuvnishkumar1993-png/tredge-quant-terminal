@@ -2,36 +2,26 @@ import os
 import sys
 import streamlit as st
 import pandas as pd
-import requests
-
-# Bulletproof Path Injector & Fallback Handler
-try:
-    from utils import init_global_state, get_asset_details_from_master, fetch_live_expiries, get_available_symbols
-except ImportError:
-    ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    if ROOT_DIR not in sys.path:
-        sys.path.append(ROOT_DIR)
-    from utils import init_global_state, get_asset_details_from_master, fetch_live_expiries, get_available_symbolsimport streamlit as st
-import pandas as pd
 import numpy as np
 import requests
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from utils import init_global_state, get_asset_details_from_master, fetch_live_expiries, get_available_symbols
 
-st.set_page_config(page_title="Institutional PCR & OI Buildup Desk", page_icon="📈", layout="wide")
+try:
+    from utils import init_global_state, get_asset_details_from_master, fetch_live_expiries, get_available_symbols
+except ImportError:
+    ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    if ROOT_DIR not in sys.path: sys.path.append(ROOT_DIR)
+    from utils import init_global_state, get_asset_details_from_master, fetch_live_expiries, get_available_symbols
+
+st.set_page_config(page_title="Institutional PCR & OI Buildup", page_icon="📈", layout="wide")
 st.markdown("## 📈 PCR Divergence & Strike-wise OI Buildup Analytics")
 st.markdown("---")
 
 init_global_state()
 all_symbols = get_available_symbols()
 
-selected_symbol = st.sidebar.selectbox(
-    "Select Underlying Asset", 
-    all_symbols,
-    index=all_symbols.index(st.session_state.global_symbol) if st.session_state.global_symbol in all_symbols else 0,
-    key="global_symbol_pcr"
-)
+selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="pcr_sym")
 st.session_state.global_symbol = selected_symbol
 
 resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
