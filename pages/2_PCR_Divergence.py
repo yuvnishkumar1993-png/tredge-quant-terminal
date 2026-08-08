@@ -63,3 +63,4 @@ with tab2:
             "Put Buildup": np.random.choice(buildup_types)
         })
     st.dataframe(pd.DataFrame(heatmap_records), use_container_width=True, height=450, hide_index=True)
+st.write(res.status_code)
