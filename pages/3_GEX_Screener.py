@@ -2,25 +2,20 @@ import os
 import sys
 import streamlit as st
 import pandas as pd
-import requests
-
-# Bulletproof Path Injector & Fallback Handler
-try:
-    from utils import init_global_state, get_asset_details_from_master, fetch_live_expiries, get_available_symbols
-except ImportError:
-    ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    if ROOT_DIR not in sys.path:
-        sys.path.append(ROOT_DIR)
-    from utils import init_global_state, get_asset_details_from_master, fetch_live_expiries, get_available_symbolsimport streamlit as st
-import pandas as pd
 import numpy as np
 import requests
 import math
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from utils import init_global_state, get_asset_details_from_master, fetch_live_expiries, get_available_symbols
 
-st.set_page_config(page_title="Advanced GEX & Gamma Flip Terminal", page_icon="🧲", layout="wide")
+try:
+    from utils import init_global_state, get_asset_details_from_master, fetch_live_expiries, get_available_symbols
+except ImportError:
+    ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    if ROOT_DIR not in sys.path: sys.path.append(ROOT_DIR)
+    from utils import init_global_state, get_asset_details_from_master, fetch_live_expiries, get_available_symbols
+
+st.set_page_config(page_title="GEX & Gamma Flip Terminal", page_icon="🧲", layout="wide")
 st.markdown("## 🧲 Gamma Exposure (GEX) & Market-wide Flip Screener")
 st.markdown("---")
 
@@ -33,12 +28,7 @@ tab1, tab2 = st.tabs(["📊 Single Asset GEX Profile", "⚡ All F&O Gamma Flip &
 
 with tab1:
     st.sidebar.markdown("### ⚙️ GEX Desk Parameters")
-    selected_symbol = st.sidebar.selectbox(
-        "Select Underlying Asset", 
-        all_symbols,
-        index=all_symbols.index(st.session_state.global_symbol) if st.session_state.global_symbol in all_symbols else 0,
-        key="global_symbol_gex"
-    )
+    selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="gex_sym")
     st.session_state.global_symbol = selected_symbol
 
     resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
