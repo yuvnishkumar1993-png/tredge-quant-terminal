@@ -1,8 +1,10 @@
 import os
 import sys
+import sqlite3
 import streamlit as st
 import pandas as pd
 import numpy as np
+import datetime
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -12,7 +14,7 @@ if ROOT_DIR not in sys.path:
     sys.path.append(ROOT_DIR)
 
 try:
-    from utils import init_global_state, get_asset_details_from_master, get_available_symbols, fetch_live_expiries
+    from utils import init_global_state, get_asset_details_from_master, get_available_symbols
 except ImportError:
     def init_global_state():
         if "global_symbol" not in st.session_state: 
@@ -21,46 +23,72 @@ except ImportError:
         return (13, "IDX_I", 65) if sym.upper() == "NIFTY" else (2885, "NSE_FNO", 250)
     def get_available_symbols():
         return ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "SBIN"]
-    def fetch_live_expiries(c, t, s, seg):
-        return ["2026-08-13", "2026-08-20"]
 
-st.set_page_config(page_title="Institutional Historical Analytics Terminal", page_icon="🏛️", layout="wide")
-st.markdown("## 🏛️ Institutional-Grade Historical Options & Order Flow Terminal")
+st.set_page_config(page_title="Institutional Database Historical Terminal", page_icon="🗄️", layout="wide")
+st.markdown("## 🗄️ Institutional Database-Backed Historical Analytics Desk")
 st.markdown("---")
 
 init_global_state()
 all_symbols = get_available_symbols()
 
+# --- LOCAL SQLITE DATABASE CONNECTION SETUP ---
+DB_PATH = os.path.join(ROOT_DIR, "market_data.db")
+
+def init_database():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS market_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            date_str TEXT,
+            symbol TEXT,
+            spot_price REAL,
+            oi_pcr REAL,
+            max_pain REAL,
+            volume_delta REAL,
+            cumulative_cvd REAL,
+            net_gex REAL,
+            lot_size INTEGER
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+init_database()
+
 # --- PROFESSIONAL SIDEBAR CONTROLS ---
-st.sidebar.markdown("### ⚙️ Historical Desk Controls")
-selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="hist_fix_sym")
+st.sidebar.markdown("### ⚙️ Historical Database Controls")
+selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="hist_db_sym")
 st.session_state.global_symbol = selected_symbol
 
 resolved_sec_id, resolved_seg, master_lot = get_asset_details_from_master(selected_symbol)
 
-# --- LOT SIZE CONTROL ---
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 📦 Lot Size Control")
 lot_size = st.sidebar.number_input(
     "Verify / Override Lot Size", 
     min_value=1, max_value=10000, 
     value=int(master_lot), step=1,
-    key=f"hist_fix_lot_{selected_symbol}"
+    key=f"hist_db_lot_{selected_symbol}"
 )
 
-# --- ACCURATE SPOT PRICE CALIBRATION ---
-default_base_spot = 50500.0 if "BANK" in selected_symbol.upper() else (24500.0 if "NIFTY" in selected_symbol.upper() else 2500.0)
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 🎯 Spot Price Calibration")
-manual_base_spot = st.sidebar.number_input(
-    "Accurate Spot / Base Price",
-    min_value=1.0, max_value=1000000.0,
-    value=float(default_base_spot), step=10.0,
-    key=f"hist_fix_spot_{selected_symbol}"
-)
+# --- FETCH AVAILABLE DATES FROM DATABASE ---
+def get_recorded_dates(sym):
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        query = "SELECT DISTINCT date_str FROM market_snapshots WHERE symbol = ? ORDER BY date_str DESC"
+        df_dates = pd.read_sql(query, conn, params=(sym,))
+        conn.close()
+        if not df_dates.empty:
+            return df_dates['date_str'].tolist()
+    except Exception:
+        pass
+    # Fallback to today if database is empty
+    return [datetime.date.today().strftime("%Y-%m-%d")]
 
-historical_dates = ["2026-08-07", "2026-08-06", "2026-08-05", "2026-08-04"]
-selected_date = st.sidebar.selectbox("Select Trading Session Date", historical_dates, key="hist_fix_date")
+available_dates = get_recorded_dates(selected_symbol)
+selected_date = st.sidebar.selectbox("Select Recorded Session Date", available_dates, key="hist_db_date")
 
 analysis_mode = st.sidebar.selectbox(
     "Select Analytical Dashboard View",
@@ -70,84 +98,41 @@ analysis_mode = st.sidebar.selectbox(
         "Volume Delta & Cumulative CVD Flow",
         "Max Pain & Gamma Exposure (GEX) History"
     ],
-    key="hist_fix_mode"
+    key="hist_db_mode"
 )
 
 st.sidebar.markdown("---")
-st.sidebar.markdown(f"**Core Specs:**\n- Scrip ID: `{resolved_sec_id}`\n- Segment: `{resolved_seg}`\n- Lot Size: `{lot_size}`")
+st.sidebar.markdown(f"**Database Status:**\n- DB File: `market_data.db`\n- Active Asset: `{selected_symbol}`")
 
-# --- PRECISION HISTORICAL ENGINE (Aligned with Master Option Logic) ---
-@st.cache_data(ttl=60)
-def fetch_precise_historical_dataset(sym, dt, lot, base_spot):
+# --- QUERY REAL RECORDED DATA FROM SQLITE ---
+@st.cache_data(ttl=10)
+def load_historical_from_db(sym, dt):
     try:
-        np.random.seed(hash(sym + dt) % 2**32)
+        conn = sqlite3.connect(DB_PATH)
+        query = """
+            SELECT timestamp, spot_price as "Spot Price (₹)", oi_pcr as "OI PCR", 
+                   max_pain as "Max Pain Strike", volume_delta as "Volume Delta", 
+                   cumulative_cvd as "Cumulative CVD", net_gex as "Net GEX (₹ Cr)"
+            FROM market_snapshots 
+            WHERE symbol = ? AND date_str = ?
+            ORDER BY timestamp ASC
+        """
+        df_db = pd.read_sql(query, conn, params=(sym, dt))
+        conn.close()
         
-        time_slots = [
-            "09:15", "09:30", "09:45", "10:00", "10:15", "10:30", "10:45", "11:00",
-            "11:15", "11:30", "11:45", "12:00", "12:15", "12:30", "12:45", "13:00",
-            "13:15", "13:30", "13:45", "14:00", "14:15", "14:30", "14:45", "15:00",
-            "15:15", "15:30"
-        ]
-        
-        step = 100 if "BANK" in sym.upper() else 50
-        spots, pcr_vals, max_pain_vals = [], [], []
-        ce_oi_list, pe_oi_list, vol_deltas, cvd_list, gex_list = [], [], [], [], []
-        
-        curr_spot = float(base_spot)
-        curr_mp = round(curr_spot / step) * step
-        cum_cvd = 0.0
-
-        for i, t in enumerate(time_slots):
-            # Realistic price walk
-            curr_spot += np.random.normal(0, 12)
-            spots.append(round(curr_spot, 2))
-            
-            # Precise PCR based on market sentiment simulation
-            pcr = round(0.95 + (np.sin(i / 3.0) * 0.2) + np.random.normal(0, 0.03), 2)
-            pcr_vals.append(max(0.5, pcr))
-            
-            # Accurate OI calculations scaled by Lot Size
-            base_contracts = 2500000
-            c_oi = int(base_contracts + np.random.normal(0, 200000)) * lot
-            p_oi = int(c_oi * pcr)
-            ce_oi_list.append(c_oi)
-            pe_oi_list.append(p_oi)
-            
-            # Max Pain centered around spot
-            if i % 8 == 0 and i > 0:
-                curr_mp += step * np.random.choice([-1, 1])
-            max_pain_vals.append(curr_mp)
-            
-            # Order Flow Volume Delta & CVD
-            v_delta = round(np.random.uniform(-15000, 18000) * (lot / max(1, lot * 0.1)), 2)
-            vol_deltas.append(v_delta)
-            cum_cvd += v_delta
-            cvd_list.append(round(cum_cvd, 2))
-            
-            # GEX Calculation
-            gex = round(np.random.uniform(-40.0, 50.0), 2)
-            gex_list.append(gex)
-
-        df_full = pd.DataFrame({
-            "Time": time_slots,
-            "Spot Price (₹)": spots,
-            "OI PCR": pcr_vals,
-            "Max Pain Strike": max_pain_vals,
-            "Total CE OI": ce_oi_list,
-            "Total PE OI": pe_oi_list,
-            "Volume Delta": vol_deltas,
-            "Cumulative CVD": cvd_list,
-            "Net GEX (₹ Cr)": gex_list
-        })
-        return df_full
+        if not df_db.empty:
+            # Extract HH:MM from timestamp
+            df_db['Time'] = pd.to_datetime(df_db['timestamp']).dt.strftime('%H:%M')
+            return df_db
     except Exception:
-        return pd.DataFrame()
+        pass
+    return pd.DataFrame()
 
-df_hist = fetch_precise_historical_dataset(selected_symbol, selected_date, lot_size, manual_base_spot)
+df_hist = load_historical_from_db(selected_symbol, selected_date)
 
-# --- DASHBOARD RENDER ---
+# --- DASHBOARD RENDERING & FALLBACK GUIDANCE ---
 if not df_hist.empty:
-    st.markdown(f"### 📊 Historical Analytics: `{selected_symbol}` | Date: `{selected_date}`")
+    st.markdown(f"### 📊 Recorded Session Analytics: `{selected_symbol}` | Date: `{selected_date}`")
     
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     with c1: st.metric(label="Open / Close Spot", value=f"₹{df_hist.iloc[-1]['Spot Price (₹)']:,.2f}", delta=round(df_hist.iloc[-1]['Spot Price (₹)'] - df_hist.iloc[0]['Spot Price (₹)'], 2))
@@ -161,7 +146,7 @@ if not df_hist.empty:
 
     tab1, tab2, tab3 = st.tabs([
         "📈 Pro Interactive Chart", 
-        "📋 Historical Session Matrix", 
+        "📋 Recorded Session Matrix", 
         "🔍 Analytical Insights"
     ])
 
@@ -174,9 +159,7 @@ if not df_hist.empty:
             fig.add_trace(go.Scatter(x=df_hist['Time'], y=df_hist['OI PCR'], name="OI PCR", line=dict(color='#2ca02c', width=2)), secondary_y=True)
             y2_title = "OI PCR"
         elif analysis_mode == "OI Build-up & PCR Migration":
-            fig.add_trace(go.Scatter(x=df_hist['Time'], y=df_hist['Total CE OI'], name="Total CE OI", line=dict(color='#d62728', width=2)), secondary_y=False)
-            fig.add_trace(go.Scatter(x=df_hist['Time'], y=df_hist['Total PE OI'], name="Total PE OI", line=dict(color='#2ca02c', width=2)), secondary_y=False)
-            fig.add_trace(go.Scatter(x=df_hist['Time'], y=df_hist['OI PCR'], name="OI PCR", line=dict(color='#ff7f0e', width=2, dash='dash')), secondary_y=True)
+            fig.add_trace(go.Scatter(x=df_hist['Time'], y=df_hist['OI PCR'], name="OI PCR", line=dict(color='#ff7f0e', width=2)), secondary_y=True)
             y2_title = "OI PCR"
         elif analysis_mode == "Volume Delta & Cumulative CVD Flow":
             bar_colors = ['#2ea043' if v >= 0 else '#f85149' for v in df_hist['Volume Delta']]
@@ -191,7 +174,7 @@ if not df_hist.empty:
         fig.update_layout(
             template='plotly_white', plot_bgcolor='white', paper_bgcolor='white', font=dict(color='black'),
             height=480, margin=dict(l=20, r=20, t=30, b=20),
-            xaxis=dict(title="Time Slots", gridcolor='#e1e4e8'),
+            xaxis=dict(title="Recorded Time Slots", gridcolor='#e1e4e8'),
             yaxis=dict(title="Primary Axis", gridcolor='#e1e4e8'),
             yaxis2=dict(title=y2_title, overlaying='y', side='right', showgrid=False),
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
@@ -199,15 +182,39 @@ if not df_hist.empty:
         st.plotly_chart(fig, use_container_width=True)
 
     with tab2:
-        st.markdown("### 📋 Precision Session Matrix")
+        st.markdown("### 📋 Recorded Database Matrix")
         st.dataframe(df_hist, use_container_width=True, height=420, hide_index=True)
 
     with tab3:
-        st.markdown("### 🔍 Behavioral Summary")
+        st.markdown("### 🔍 Database Behavioral Insights")
         c_i1, c_i2 = st.columns(2)
         with c_i1:
-            st.info(f"**Range:** High: ₹{df_hist['Spot Price (₹)'].max():,.2f} | Low: ₹{df_hist['Spot Price (₹)'].min():,.2f}")
+            st.info(f"**Recorded Range:** High: ₹{df_hist['Spot Price (₹)'].max():,.2f} | Low: ₹{df_hist['Spot Price (₹)'].min():,.2f}")
         with c_i2:
-            st.success(f"**Flow Bias:** {'Bullish Accumulation' if df_hist.iloc[-1]['Cumulative CVD'] > 0 else 'Bearish Distribution'}")
+            st.success(f"**Recorded Flow Bias:** {'Bullish Accumulation' if df_hist.iloc[-1]['Cumulative CVD'] > 0 else 'Bearish Distribution'}")
 else:
-    st.warning("⚠️ डेटा लोड करने में असमर्थ।")
+    st.markdown("---")
+    st.warning(f"⚠️ इस तारीख (`{selected_date}`) के लिए लोकल डेटाबेस में कोई रिकॉर्डेड स्नैपशॉट मौजूद नहीं है।")
+    st.info(
+        """
+        **यह संदेश क्यों आ रहा है?**\n
+        चूँकि यह नया डेटाबेस आर्किटेक्चर है, इसलिए जब बाजार लाइव चल रहा होगा और आप अपने ऑप्शन चेन या सीवीडी पेज को चलाएंगे, तब यह सिस्टम ऑटोमैटिकली डेटा को इस डेटाबेस में सेव करना शुरू कर देगा। 
+        \nयदि आप अभी टेस्टिंग के लिए डेटा जोड़ना चाहते हैं, तो आप अपने किसी भी लाइव पेज पर जाकर एक बार रिफ्रेश कर सकते हैं या नीचे दिए गए बटन से एक टेस्ट स्नैपशॉट लॉग कर सकते हैं।
+        """
+    )
+    
+    if st.button("📥 Log a Test Snapshot to Database Now"):
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            now = datetime.datetime.now()
+            cursor.execute("""
+                INSERT INTO market_snapshots (timestamp, date_str, symbol, spot_price, oi_pcr, max_pain, volume_delta, cumulative_cvd, net_gex, lot_size)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (now.strftime("%Y-%m-%d %H:%M:%S"), now.strftime("%Y-%m-%d"), selected_symbol, 24500.0, 1.05, 24500.0, 5000.0, 5000.0, 12.5, lot_size))
+            conn.commit()
+            conn.close()
+            st.success("✅ टेस्ट स्नैपशॉट सफलतापूर्वक डेटाबेस में सेव हो गया है! अब पेज को रीफ्रेश करें।")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error logging snapshot: {e}")
