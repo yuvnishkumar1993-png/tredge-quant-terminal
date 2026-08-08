@@ -34,7 +34,7 @@ all_symbols = get_available_symbols()
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="iv_elite_sym_sig")
+selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="iv_elite_sym_safe")
 st.session_state.global_symbol = selected_symbol
 
 # Master Fetch with Lot Size Control
@@ -48,14 +48,14 @@ lot_size = st.sidebar.number_input(
     max_value=10000, 
     value=int(master_lot), 
     step=1,
-    key=f"iv_elite_lot_sig_{selected_symbol}",
+    key=f"iv_elite_lot_safe_{selected_symbol}",
     help="मास्टर फाइल से सिंक्ड लॉट साइज़।"
 )
 
 expiries = fetch_live_expiries(client_id, access_token, resolved_sec_id, resolved_seg)
 if not expiries:
     expiries = ["2026-08-13", "2026-08-20"]
-selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="iv_elite_exp_sig")
+selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="iv_elite_exp_safe")
 
 # --- QUANTITATIVE BLACK-SCHOLES & GREEKS ENGINE ---
 def standard_normal_cdf(x):
@@ -103,7 +103,7 @@ def calculate_implied_volatility(market_price, S, K, T, r=0.06, option_type='CE'
     return round(sigma * 100.0, 2)
 
 @st.cache_data(ttl=60)
-def fetch_elite_iv_data(c_id, token, sec_id, seg, exp):
+def fetch_elite_iv_data_safe(c_id, token, sec_id, seg, exp):
     if not c_id or not token: 
         return pd.DataFrame(), 0.0, 0.0
         
@@ -163,14 +163,14 @@ def fetch_elite_iv_data(c_id, token, sec_id, seg, exp):
                 df_out = df_out.sort_values(by="Strike").reset_index(drop=True)
             
             mean_iv = df_out[(df_out['Call IV (%)'] > 0)]['Call IV (%)'].mean()
-            realized_vol = max(10.0, mean_iv - 2.5)
+            realized_vol = max(10.0, mean_iv - 2.5) if not math.isnan(mean_iv) else 15.0
             
             return df_out, spot_val, realized_vol
     except Exception:
         pass
     return pd.DataFrame(), 0.0, 0.0
 
-df_iv, live_spot, realized_vol = fetch_elite_iv_data(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry)
+df_iv, live_spot, realized_vol = fetch_elite_iv_data_safe(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry)
 
 if df_iv.empty or live_spot <= 0.0:
     step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
@@ -196,22 +196,30 @@ if df_iv.empty or live_spot <= 0.0:
     df_iv = pd.DataFrame(mock_recs)
     realized_vol = 12.5
 
+# --- SAFE INDEXING GUARD ---
 df_iv['Dist'] = abs(df_iv['Strike'] - live_spot)
-c_idx = df_iv['Dist'].idxmin()
-disp_iv = df_iv.iloc[max(0, c_idx-15):min(len(df_iv), c_idx+16)].copy()
+if not df_iv.empty:
+    c_idx = int(df_iv['Dist'].idxmin())
+    disp_iv = df_iv.iloc[max(0, c_idx-15):min(len(df_iv), c_idx+16)].copy()
+else:
+    disp_iv = df_iv.copy()
+    c_idx = 0
 
-put_25d_row = disp_iv.iloc[(disp_iv['Put Delta'] - (-0.25)).abs().argsort()[:1]]
-call_25d_row = disp_iv.iloc[(disp_iv['Call Delta'] - 0.25).abs().argsort()[:1]]
-atm_row = disp_iv.iloc[c_idx]
+if not disp_iv.empty:
+    put_25d_row = disp_iv.iloc[(disp_iv['Put Delta'] - (-0.25)).abs().argsort()[:1]]
+    call_25d_row = disp_iv.iloc[(disp_iv['Call Delta'] - 0.25).abs().argsort()[:1]]
+    atm_row = disp_iv.iloc[min(c_idx, len(disp_iv)-1)]
 
-iv_25p = float(put_25d_row['Put IV (%)'].values[0]) if not put_25d_row.empty else 16.0
-iv_25c = float(call_25d_row['Call IV (%)'].values[0]) if not call_25d_row.empty else 14.0
-iv_atm = float((atm_row['Call IV (%)'] + atm_row['Put IV (%)']) / 2.0)
+    iv_25p = float(put_25d_row['Put IV (%)'].values[0]) if not put_25d_row.empty else 16.0
+    iv_25c = float(call_25d_row['Call IV (%)'].values[0]) if not call_25d_row.empty else 14.0
+    iv_atm = float((atm_row['Call IV (%)'] + atm_row['Put IV (%)']) / 2.0) if 'Call IV (%)' in atm_row else 15.0
+else:
+    iv_25p, iv_25c, iv_atm = 16.0, 14.0, 15.0
 
 risk_reversal = round(iv_25p - iv_25c, 2)
 butterfly = round(((iv_25p + iv_25c) / 2.0) - iv_atm, 2)
-avg_call_iv = disp_iv['Call IV (%)'].mean()
-avg_put_iv = disp_iv['Put IV (%)'].mean()
+avg_call_iv = disp_iv['Call IV (%)'].mean() if not disp_iv.empty else 15.0
+avg_put_iv = disp_iv['Put IV (%)'].mean() if not disp_iv.empty else 16.0
 iv_rv_spread = round(avg_call_iv - realized_vol, 2)
 
 # --- AUTOMATED QUANTITATIVE SIGNAL & MARKET BIAS ENGINE ---
@@ -220,25 +228,25 @@ def generate_quantitative_signal(rr, spread, atm_iv):
         return {
             "bias": "🚨 High Panic / Extreme Put Buying (Bearish Hedging)",
             "action": "Buy Protective Puts / Hedged Bear Spread",
-            "desc": "25-Delta Risk Reversal बहुत ज्यादा पॉजिटिव है और IV, RV से काफी ऊपर है। इसका मतलब है कि इंस्टीट्यूशंस बाजार में नीचे के क्रैश से बचने के लिए भारी मात्रा में पुट खरीद रहे हैं। बाजार में पैनिक की स्थिति है।"
+            "desc": "25-Delta Risk Reversal बहुत ज्यादा पॉजिटिव है और IV, RV से काफी ऊपर है। इंस्टीट्यूशंस बाजार में नीचे के क्रैश से बचने के लिए भारी मात्रा में पुट खरीद रहे हैं।"
         }
     elif rr < -1.0 and spread < 0:
         return {
             "bias": "🚀 Call Greed / Aggressive Upside Momentum (Bullish)",
             "action": "Buy Dips / Bull Call Spread",
-            "desc": "कॉल साइड की वोलाटिलिटी और मांग पुट से ज्यादा है। ट्रेडर्स ऊपर के स्तरों के लिए एग्रेसिवली कॉल्स खरीद रहे हैं। बाजार में तेजी का जोरदार रुझान है।"
+            "desc": "कॉल साइड की वोलाटिलिटी और मांग पुट से ज्यादा है। ट्रेडर्स ऊपर के स्तरों के लिए एग्रेसिवली कॉल्स खरीद रहे हैं।"
         }
     elif atm_iv < 12.0:
         return {
             "bias": "💤 Low Volatility Regime (Option Selling Edge)",
             "action": "Short Strangle / Iron Condor / Theta Decay",
-            "desc": "IV बेहद कम है, यानी प्रीमियम बहुत सस्ते बिक रहे हैं। ऑप्शन बायर्स के लिए यह समय खतरनाक है, लेकिन ऑप्शन सेलर्स (Short Volatility) के लिए बड़ा मुनाफा कमाने का सुनहरा मौका है।"
+            "desc": "IV बेहद कम है। ऑप्शन सेलर्स (Short Volatility) के लिए बड़ा मुनाफा कमाने का सुनहरा मौका है।"
         }
     else:
         return {
             "bias": "⚖️ Neutral Volatility & Balanced Skew",
             "action": "Rangebound Iron Condor / Delta Neutral Hedging",
-            "desc": "रिस्क रिवर्सल और स्प्रेड संतुलित जोन में हैं। बाजार एक सीमित दायरे में रहने की संभावना है।"
+            "desc": "रिस्क रिवर्सल और स्प्रेड संतुलित जोन में हैं।"
         }
 
 quant_signal = generate_quantitative_signal(risk_reversal, iv_rv_spread, iv_atm)
