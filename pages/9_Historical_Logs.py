@@ -22,8 +22,8 @@ except ImportError:
     def get_available_symbols():
         return ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "SBIN"]
 
-st.set_page_config(page_title="Real Historical Market Charts", page_icon="📈", layout="wide")
-st.markdown("## 📈 Real Dhan Historical Price & Volume Analytics Desk")
+st.set_page_config(page_title="DhanHQ Ver 2.0 Historical Terminal", page_icon="🏛️", layout="wide")
+st.markdown("## 🏛️ Official DhanHQ Ver 2.0 Historical Data Terminal")
 st.markdown("---")
 
 init_global_state()
@@ -32,8 +32,8 @@ client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
 # --- SIDEBAR CONTROLS ---
-st.sidebar.markdown("### ⚙️ Real Historical Controls")
-selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="real_hist_sym")
+st.sidebar.markdown("### ⚙️ API Configuration")
+selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="dhan_v2_sym")
 st.session_state.global_symbol = selected_symbol
 
 resolved_sec_id, resolved_seg, master_lot = get_asset_details_from_master(selected_symbol)
@@ -45,26 +45,27 @@ lot_size = st.sidebar.number_input(
     "Verify / Override Lot Size", 
     min_value=1, max_value=10000, 
     value=int(master_lot), step=1,
-    key=f"real_hist_lot_{selected_symbol}"
+    key=f"dhan_v2_lot_{selected_symbol}"
 )
 
-# Date Selection
+# Date Selection as per Ver 2.0 specs
 today_date = datetime.date.today()
-default_from = today_date - datetime.timedelta(days=5)
-selected_date = st.sidebar.date_input("Select Historical Date", value=today_date, key="real_hist_date")
+default_from = today_date - datetime.timedelta(days=30)
+fromDate = st.sidebar.date_input("From Date", value=default_from, key="dhan_v2_from")
+toDate = st.sidebar.date_input("To Date", value=today_date, key="dhan_v2_to")
 
 st.sidebar.markdown("---")
-st.sidebar.markdown(f"**API Mapping:**\n- Security ID: `{resolved_sec_id}`\n- Segment: `{resolved_seg}`")
+st.sidebar.markdown(f"**Mapping Specs:**\n- Security ID: `{resolved_sec_id}`\n- Segment: `{resolved_seg}`")
 
-# --- REAL DHAN HISTORICAL API ENGINE (NO DUMMY DATA) ---
+# --- OFFICIAL DHANHQ VER 2.0 HISTORICAL DATA FETCHER ---
 @st.cache_data(ttl=60)
-def fetch_real_dhan_historical_data(c_id, token, sec_id, seg, dt):
+def fetch_dhan_ver2_historical(c_id, token, sec_id, seg, f_date, t_date):
     """
-    यह फंक्शन केवल Dhan के ऑफिशियल हिस्टोरिकल चार्ट्स API से असली कैंडल डेटा उठाता है।
-    कोई फर्जी या रैंडम डेटा जनरेट नहीं किया जाता।
+    DhanHQ Ver 2.0 Historical Data API Endpoint Integration:
+    POST /v2/charts/historical
     """
     if not c_id or not token:
-        return pd.DataFrame(), "Access Token Missing"
+        return pd.DataFrame(), "Client ID or Access Token is missing."
         
     url = "https://api.dhan.co/v2/charts/historical"
     headers = {
@@ -73,7 +74,6 @@ def fetch_real_dhan_historical_data(c_id, token, sec_id, seg, dt):
         "Content-Type": "application/json"
     }
     
-    # सही इंस्ट्रूमेंट टाइप तय करना
     instrument_type = "INDEX" if "IDX" in str(seg).upper() else "EQUITY"
     
     payload = {
@@ -81,75 +81,71 @@ def fetch_real_dhan_historical_data(c_id, token, sec_id, seg, dt):
         "exchangeSegment": str(seg),
         "instrument": instrument_type,
         "expiryCode": 0,
-        "fromDate": str(dt),
-        "toDate": str(dt)
+        "oi": False,
+        "fromDate": str(f_date),
+        "toDate": str(t_date)
     }
     
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=8)
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
         if response.status_code == 200:
             res_json = response.json()
             data_block = res_json.get("data", {})
             
-            timestamps = data_block.get("start_Time", [])
+            timestamps = data_block.get("timestamp", [])
+            opens = data_block.get("open", [])
+            highs = data_block.get("high", [])
+            lows = data_block.get("low", [])
             closes = data_block.get("close", [])
             volumes = data_block.get("volume", [])
             
             if timestamps and closes:
-                formatted_times = [datetime.datetime.fromtimestamp(ts).strftime('%H:%M') for ts in timestamps]
-                df_real = pd.DataFrame({
-                    "Time": formatted_times,
-                    "Spot / Close Price (₹)": [float(c) for c in closes],
-                    "Traded Volume": [float(v) for v in volumes] if volumes else [0.0] * len(closes)
+                formatted_times = [datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d') for ts in timestamps]
+                df = pd.DataFrame({
+                    "Date": formatted_times,
+                    "Open": opens,
+                    "High": highs,
+                    "Low": lows,
+                    "Close": closes,
+                    "Volume": volumes
                 })
-                return df_real, "Success"
+                return df, "Success"
             else:
-                return pd.DataFrame(), "No Data Returned for this Date"
+                return pd.DataFrame(), f"No records found in response data: {res_json}"
         else:
-            return pd.DataFrame(), f"API Error: {response.status_code}"
+            return pd.DataFrame(), f"API Error HTTP {response.status_code}: {response.text}"
     except Exception as e:
-        return pd.DataFrame(), f"Exception: {str(e)}"
+        return pd.DataFrame(), f"Exception occurred: {str(e)}"
 
-# डेटा फेच करना
-df_real, fetch_status = fetch_real_dhan_historical_data(client_id, access_token, resolved_sec_id, resolved_seg, selected_date)
+# Fetching data using official API
+df_data, status_msg = fetch_dhan_ver2_historical(client_id, access_token, resolved_sec_id, resolved_seg, fromDate, toDate)
 
 # --- DASHBOARD RENDER ---
-if not df_real.empty:
-    st.markdown(f"### 📊 Real Historical Market Data: `{selected_symbol}` | Date: `{selected_date}`")
+if not df_data.empty:
+    st.markdown(f"### 📊 Historical Data for `{selected_symbol}`")
     
     c1, c2, c3 = st.columns(3)
-    with c1: st.metric(label="Latest Close Price", value=f"₹{df_real.iloc[-1]['Spot / Close Price (₹)']:,.2f}")
-    with c2: st.metric(label="Total Session Volume", value=f"{df_real['Traded Volume'].sum():,.0f}")
-    with c3: st.metric(label="Active Lot Size", value=str(lot_size))
+    with c1: st.metric(label="Latest Close", value=f"₹{df_data.iloc[-1]['Close']:,.2f}")
+    with c2: st.metric(label="Total Volume", value=f"{df_data['Volume'].sum():,.0f}")
+    with c3: st.metric(label="Lot Size", value=str(lot_size))
 
     st.markdown("---")
 
-    tab1, tab2 = st.tabs(["📈 Real Price Chart", "📋 Session Records Table"])
+    tab1, tab2 = st.tabs(["📈 Price Chart", "📋 Data Table"])
 
     with tab1:
         fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=df_real['Time'], 
-            y=df_real['Spot / Close Price (₹)'], 
-            mode='lines+markers', 
-            name="Actual Close Price", 
-            line=dict(color='#1f77b4', width=2.5)
-        ))
+        fig.add_trace(go.Scatter(x=df_data['Date'], y=df_data['Close'], mode='lines+markers', name="Close Price", line=dict(color='#1f77b4', width=2)))
         fig.update_layout(
-            template='plotly_white', 
-            plot_bgcolor='white', 
-            paper_bgcolor='white', 
-            font=dict(color='black'),
-            height=450, 
-            margin=dict(l=20, r=20, t=30, b=20),
-            xaxis=dict(title="Time (HH:MM)", gridcolor='#e1e4e8'),
+            template='plotly_white', plot_bgcolor='white', paper_bgcolor='white', font=dict(color='black'),
+            height=450, margin=dict(l=20, r=20, t=30, b=20),
+            xaxis=dict(title="Date", gridcolor='#e1e4e8'),
             yaxis=dict(title="Price (₹)", gridcolor='#e1e4e8')
         )
         st.plotly_chart(fig, use_container_width=True)
 
     with tab2:
-        st.markdown("### 📋 Official Exchange Historical Records")
-        st.dataframe(df_real, use_container_width=True, height=400, hide_index=True)
+        st.dataframe(df_data, use_container_width=True, height=400, hide_index=True)
 else:
-    st.warning(f"⚠️ इस तारीख (`{selected_date}`) के लिए वास्तविक डेटा प्राप्त नहीं हुआ।")
-    st.info(f"**सिस्टम संदेश:** {fetch_status}\n\n*नोट: सुनिश्चित करें कि आपका Dhan API टोकन एक्टिव है और चुनी गई तारीख के लिए एक्सचेंज पर ट्रेडिंग डेटा मौजूद है (संडे या हॉलिडे का डेटा उपलब्ध नहीं होता)।*")
+    st.warning(f"⚠️ डेटा प्राप्त नहीं हुआ।")
+    st.info(f"**सिस्टम स्टेटस:** {status_msg}")
