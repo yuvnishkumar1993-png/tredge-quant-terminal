@@ -15,7 +15,7 @@ Use the sidebar navigation to access real-time institutional desks:
 * **GEX Screener:** Gamma exposure profile and market-wide gamma flip detection.
 * **IV Rank Screener:** Volatility regime identification for option selling vs buying.
 * **Automated Signal Engine:** AI-driven multi-indicator institutional trade strategy generator.
-* **Volume & OI Spikes:** Real-time anomaly detection tracking smart money accumulation.
+* **CVD & Order Flow:** Cumulative Volume Delta tracking and footprint delta imbalance matrix.
 """)
 
 st.sidebar.markdown("### 🔐 DhanHQ API Authentication")
