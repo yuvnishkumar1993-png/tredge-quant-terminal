@@ -24,7 +24,7 @@ except ImportError:
     def get_available_symbols():
         return ["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "TCS", "SBIN"]
 
-st.set_page_config(page_title="Institutional Master Option Chain Desk", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Institutional Option Chain Desk", page_icon="⚡", layout="wide")
 st.markdown("## ⚡ Live Institutional Option Chain & Settlement Terminal")
 st.markdown("---")
 
@@ -33,7 +33,7 @@ all_symbols = get_available_symbols()
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_puredat_v1")
+selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_debug_v2")
 st.session_state.global_symbol = selected_symbol
 
 resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
@@ -44,7 +44,7 @@ strike_range_mode = st.sidebar.radio(
     "Option Chain Strike Range", 
     ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
     index=1,
-    key="strike_range_puredat_v1"
+    key="strike_range_debug_v2"
 )
 
 tab1, tab2, tab3 = st.tabs([
@@ -54,42 +54,57 @@ tab1, tab2, tab3 = st.tabs([
 ])
 
 @st.cache_data(ttl=10)
-def fetch_pure_live_option_chain(c_id, token, sec_id, seg, exp, sym):
-    """Strictly pure live parser. ZERO fake mock data generation."""
+def fetch_and_parse_dhan_option_chain(c_id, token, sec_id, seg, exp, sym):
+    """Robust parser designed to handle Dhan API v2 option chain structure precisely."""
     if not c_id or not token: 
         return pd.DataFrame(), 0.0
     
     url = "https://api.dhan.co/v2/optionchain"
     headers = {"access-token": token.strip(), "client-id": c_id.strip(), "Content-Type": "application/json"}
     try:
-        response = requests.post(url, json={"UnderlyingScrip": int(sec_id), "UnderlyingSeg": str(seg).strip(), "Expiry": str(exp).strip()}, headers=headers, timeout=6)
+        response = requests.post(url, json={"UnderlyingScrip": int(sec_id), "UnderlyingSeg": str(seg).strip(), "Expiry": str(exp).strip()}, headers=headers, timeout=8)
         if response.status_code == 200:
             res = response.json()
-            block = res.get("data", {})
-            spot_val = float(block.get("last_price", 0.0))
-            oc_map = block.get("oc", {})
-            records = []
             
+            # Extracting root block safely
+            block = res.get("data", {})
+            if not block:
+                block = res.get("status", {}) # Fallback structure check
+                
+            spot_val = float(block.get("last_price", block.get("LTP", 0.0)))
+            oc_map = block.get("oc", block.get("optionChain", {}))
+            
+            if not oc_map and isinstance(res.get("data"), dict):
+                oc_map = res.get("data", {}).get("oc", {})
+
+            records = []
             for s_str, obj in oc_map.items():
-                s_val = float(s_str)
-                ce = obj.get("ce", {})
-                pe = obj.get("pe", {})
+                try:
+                    s_val = float(s_str)
+                except ValueError:
+                    continue
                 
-                ce_ltp = float(ce.get("last_price", 0.0))
-                pe_ltp = float(pe.get("last_price", 0.0))
+                ce = obj.get("ce", obj.get("CE", {}))
+                pe = obj.get("pe", obj.get("PE", {}))
                 
-                # Filter out completely dead strikes where both LTPs are zero
+                ce_ltp = float(ce.get("last_price", ce.get("LTP", 0.0)))
+                pe_ltp = float(pe.get("last_price", pe.get("LTP", 0.0)))
+                
+                # Skip dead strikes with zero LTP on both sides
                 if ce_ltp == 0.0 and pe_ltp == 0.0:
                     continue
                 
-                ce_oi = int(ce.get("oi", 0))
-                pe_oi = int(pe.get("oi", 0))
-                ce_iv = float(ce.get("iv", 0.0))
-                pe_iv = float(pe.get("iv", 0.0))
+                ce_oi = int(ce.get("oi", ce.get("OpenInterest", 0)))
+                pe_oi = int(pe.get("oi", pe.get("OpenInterest", 0)))
+                
+                ce_iv = float(ce.get("iv", ce.get("IV", 0.0)))
+                pe_iv = float(pe.get("iv", pe.get("IV", 0.0)))
+                
+                ce_prev_oi = int(ce.get("previous_oi", ce_oi))
                 
                 records.append({
                     "CE OI (L)": round(ce_oi / 100000.0, 2),
-                    "CE Chg OI": int(ce.get("previous_oi", ce_oi) - ce_oi),
+                    "CE Chg OI": int(ce_prev_oi - ce_oi),
                     "CE IV": ce_iv,
                     "CE LTP": ce_ltp,
                     "STRIKE": int(s_val),
@@ -104,18 +119,17 @@ def fetch_pure_live_option_chain(c_id, token, sec_id, seg, exp, sym):
             if not df_out.empty: 
                 df_out = df_out.sort_values(by="STRIKE").reset_index(drop=True)
             return df_out, spot_val
-    except Exception:
-        pass
+    except Exception as e:
+        st.error(f"API Parsing Error: {e}")
     
     return pd.DataFrame(), 0.0
 
-chain_df, live_spot = fetch_pure_live_option_chain(
+chain_df, live_spot = fetch_and_parse_dhan_option_chain(
     client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol
 )
 
-# Safety check: If API returns empty data, display warning instead of fake data
 if chain_df.empty or live_spot == 0.0:
-    st.warning("⚠️ Live Option Chain data stream is currently empty or API credentials are pending. Please check your Dhan Client ID & Access Token.")
+    st.warning("⚠️ Option chain data stream returned empty. Please verify your API credentials, selected expiry, or market connectivity.")
     st.stop()
 
 # Strike Range Filtering Logic
@@ -131,7 +145,7 @@ elif "±30" in strike_range_mode:
 else:
     disp_df = chain_df.copy()
 
-# Accurate ATM IV Parsing from live view
+# --- PRECISE RANGE-FILTERED ATM IV PARSER ---
 disp_df['View_Dist'] = abs(disp_df['STRIKE'] - live_spot)
 atm_row_view = disp_df.loc[disp_df['View_Dist'].idxmin()]
 c_iv_v = atm_row_view['CE IV']
@@ -141,18 +155,19 @@ valid_ivs = [iv for iv in [c_iv_v, p_iv_v] if iv > 0.0]
 if valid_ivs:
     dynamic_atm_iv = round(sum(valid_ivs) / len(valid_ivs), 2)
 else:
+    # Scan neighborhood if exact ATM IV is 0 in API feed
     neighbors = disp_df[disp_df['View_Dist'] <= (100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50)]
     neigh_ivs = [r[col] for _, r in neighbors.iterrows() for col in ['CE IV', 'PE IV'] if r[col] > 0.0]
     dynamic_atm_iv = round(sum(neigh_ivs) / len(neigh_ivs), 2) if neigh_ivs else 12.0
 
 disp_df = disp_df.drop(columns=['View_Dist'])
 
-# Range-Filtered PCR Calculation
+# --- 100% ACCURATE RANGE-FILTERED PCR CALCULATION ---
 filtered_ce_oi_sum = disp_df['Raw_CE_OI'].sum()
 filtered_pe_oi_sum = disp_df['Raw_PE_OI'].sum()
 dynamic_pcr = round(filtered_pe_oi_sum / filtered_ce_oi_sum, 2) if filtered_ce_oi_sum > 0 else 1.0
 
-# Pure Math Norm PDF Function for Gamma Flip
+# Norm PDF Function for Gamma Flip Calculation
 def norm_pdf(x):
     return math.exp(-0.5 * x**2) / math.sqrt(2 * math.pi)
 
@@ -209,7 +224,7 @@ with tab1:
     disp_df['Institutional Buildup'] = disp_df.apply(identify_buildup, axis=1)
     clean_display_df = disp_df.drop(columns=['Dist', 'Raw_CE_OI', 'Raw_PE_OI'])
 
-    st.markdown(f"### Option Chain Matrix ({strike_range_mode}) [Zero LTP Filtered]")
+    st.markdown(f"### Option Chain Matrix ({strike_range_mode}) [Live Filtered]")
     st.dataframe(clean_display_df, use_container_width=True, height=520, hide_index=True)
 
     st.markdown("### Open Interest Concentration Walls (Support & Resistance)")
@@ -293,7 +308,7 @@ with tab2:
             "Select Table Range", 
             ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
             index=1,
-            key="settle_table_range_selector_puredat"
+            key="settle_table_range_selector_debug_v2"
         )
 
     df_pain_full['Dist_Center'] = abs(df_pain_full['Strike'] - live_spot)
