@@ -8,7 +8,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 def init_global_state():
-    """Initializes global session state for seamless multi-page institutional navigation."""
+    """Initializes global session state for seamless multi-page navigation."""
     if "global_symbol" not in st.session_state:
         st.session_state.global_symbol = "NIFTY"
     if "client_id" not in st.session_state:
@@ -28,7 +28,7 @@ def get_next_expiry():
 
 @st.cache_data(ttl=300)
 def fetch_live_expiries(c_id, token, sec_id, seg):
-    """Fetches real exchange expiry list with 5-minute caching to prevent rate-limiting."""
+    """Fetches real exchange expiry list with 5-minute caching."""
     if c_id and token:
         try:
             url = "https://api.dhan.co/v2/optionchain/expirylist"
