@@ -25,13 +25,13 @@ except ImportError:
         return ["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "TCS", "SBIN"]
 
 st.set_page_config(page_title="Institutional Master Derivative Terminal", page_icon="⚡", layout="wide")
-st.markdown("## ⚡ Ultimate Institutional PCR Divergence, Buildup & Smart-Money Terminal")
+st.markdown("## ⚡ Institutional PCR Divergence, Buildup & Automated Signals Terminal")
 st.markdown("---")
 
 init_global_state()
 all_symbols = get_available_symbols()
 
-selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="pcr_sym_ultimate")
+selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="pcr_sym_clean")
 st.session_state.global_symbol = selected_symbol
 
 # Master fetch with Sidebar Manual Lot Size Control
@@ -45,26 +45,26 @@ lot_size = st.sidebar.number_input(
     max_value=10000, 
     value=int(master_lot), 
     step=1,
-    key=f"lot_override_ultimate_{selected_symbol}",
+    key=f"lot_override_clean_{selected_symbol}",
     help="मास्टर फाइल या गलत डेटा होने पर यहाँ से सही लॉट साइज़ सेट करें।"
 )
 
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 expiries = fetch_live_expiries(client_id, access_token, resolved_sec_id, resolved_seg)
-selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="pcr_exp_ultimate")
+selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="pcr_exp_clean")
 
-tab1, tab2, tab3, tab4 = st.tabs([
+# Streamlined 3 Tabs (Removed useless flat line tab)
+tab1, tab2, tab3 = st.tabs([
     "📊 Advanced PCR & Trade Signals", 
     "🔥 Smart Buildup & Walls Scanner",
-    "🎯 Max Pain & IV Skew Matrix",
     "🚀 Institutional Execution Desk"
 ])
 
 base_spot = 50500.0 if selected_symbol == "BANKNIFTY" else (24500.0 if selected_symbol == "NIFTY" else (23500.0 if selected_symbol == "FINNIFTY" else 2950.0))
 
 @st.cache_data(ttl=15)
-def fetch_ultimate_option_chain(c_id, token, sec_id, seg, exp, sym):
+def fetch_clean_option_chain(c_id, token, sec_id, seg, exp, sym):
     fallback_spot = 50500.0 if sym == "BANKNIFTY" else (24500.0 if sym == "NIFTY" else 2950.0)
     if not c_id or not token:
         return pd.DataFrame(), fallback_spot
@@ -89,18 +89,14 @@ def fetch_ultimate_option_chain(c_id, token, sec_id, seg, exp, sym):
                 pe_oi = int(pe.get("oi", 0))
                 ce_vol = int(ce.get("volume", 0))
                 pe_vol = int(pe.get("volume", 0))
-                ce_iv = float(ce.get("iv", 12.0))
-                pe_iv = float(pe.get("iv", 12.0))
                 ce_chg = int(ce.get("previous_oi", ce_oi) - ce_oi)
-                pe_chg = int(pe.get("previous_oi", pe_oi) - pe_oi)
+                pe_chg = int(ce.get("previous_oi", pe_oi) - pe_oi)
                 
                 records.append({
                     "STRIKE": int(s_val),
                     "CE OI (L)": round(ce_oi / 100000.0, 2),
                     "CE Chg OI": ce_chg,
                     "CE Vol": ce_vol,
-                    "CE IV": ce_iv,
-                    "PE IV": pe_iv,
                     "PE Vol": pe_vol,
                     "PE Chg OI": pe_chg,
                     "PE OI (L)": round(pe_oi / 100000.0, 2),
@@ -117,7 +113,7 @@ def fetch_ultimate_option_chain(c_id, token, sec_id, seg, exp, sym):
         pass
     return pd.DataFrame(), fallback_spot
 
-chain_df, live_spot = fetch_ultimate_option_chain(
+chain_df, live_spot = fetch_clean_option_chain(
     client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol
 )
 
@@ -137,8 +133,6 @@ if chain_df.empty:
             "CE OI (L)": round(c_oi/100000, 2),
             "CE Chg OI": np.random.randint(-25000, 35000),
             "CE Vol": c_vol,
-            "CE IV": round(11.5 + np.random.uniform(0, 3), 2),
-            "PE IV": round(12.0 + np.random.uniform(0, 3), 2),
             "PE Vol": p_vol,
             "PE Chg OI": np.random.randint(-25000, 35000),
             "PE OI (L)": round(p_oi/100000, 2),
@@ -149,7 +143,7 @@ if chain_df.empty:
         })
     chain_df = pd.DataFrame(mock_recs)
 
-# --- ADVANCED MATHEMATICAL ENGINES ---
+# --- CALCULATIONS ---
 total_ce_oi = float(chain_df['Raw_CE_OI'].sum()) if 'Raw_CE_OI' in chain_df.columns else 0.0
 total_pe_oi = float(chain_df['Raw_PE_OI'].sum()) if 'Raw_PE_OI' in chain_df.columns else 0.0
 live_oi_pcr = round(total_pe_oi / total_ce_oi, 2) if total_ce_oi > 0 else 1.0
@@ -160,25 +154,13 @@ live_vol_pcr = round(total_pe_vol / total_ce_vol, 2) if total_ce_vol > 0 else 1.
 
 pcr_diff = round(live_oi_pcr - live_vol_pcr, 2)
 
-# Feature 1: Max Pain Calculation Engine
-strikes_list = chain_df['STRIKE'].values
-pain_dict = {}
-for expiry_price in strikes_list:
-    total_pain = 0
-    for _, row in chain_df.iterrows():
-        k = row['STRIKE']
-        if expiry_price > k: total_pain += (expiry_price - k) * row['Raw_CE_OI']
-        if expiry_price < k: total_pain += (k - expiry_price) * row['Raw_PE_OI']
-    pain_dict[expiry_price] = total_pain
-max_pain = min(pain_dict, key=pain_dict.get) if pain_dict else live_spot
-
-# Feature 2: Support & Resistance Concentration Walls
+# Support & Resistance Walls
 max_call_oi_row = chain_df.loc[chain_df['Raw_CE_OI'].idxmax()] if not chain_df.empty else None
 max_put_oi_row = chain_df.loc[chain_df['Raw_PE_OI'].idxmax()] if not chain_df.empty else None
 resistance_wall = int(max_call_oi_row['STRIKE']) if max_call_oi_row is not None else live_spot + 500
 support_wall = int(max_put_oi_row['STRIKE']) if max_put_oi_row is not None else live_spot - 500
 
-# Feature 3: Automated Trade Signal & Condition Engine
+# Automated Trade Signal & Condition Engine
 def generate_institutional_trade_signal(oi_pcr, vol_pcr, diff):
     if oi_pcr >= 1.2 and vol_pcr >= 1.2:
         return {
@@ -208,18 +190,17 @@ def generate_institutional_trade_signal(oi_pcr, vol_pcr, diff):
         return {
             "bias": "⚖️ Neutral / Rangebound Market",
             "action": "Short Strangle / Iron Condor (Range Trading)",
-            "desc": "दोनों PCR न्यूट्रल जोन में हैं। बाजार Max Pain और Walls के बीच दायरे में कटेगा। प्रीमियम खाने (Option Selling) के लिए बेस्ट समय है।"
+            "desc": "दोनों PCR न्यूट्रल जोन में हैं। बाजार Support और Resistance Walls के बीच दायरे में कटेगा। प्रीमियम खाने के लिए बेस्ट समय है।"
         }
 
 signal_data = generate_institutional_trade_signal(live_oi_pcr, live_vol_pcr, pcr_diff)
 
 with tab1:
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4 = st.columns(4)
     with c1: st.metric(label="Asset", value=selected_symbol)
     with c2: st.metric(label="Live Spot", value=f"₹{live_spot:,.2f}")
     with c3: st.metric(label="Live OI PCR", value=live_oi_pcr, delta="Support Bias" if live_oi_pcr >= 1.0 else "Resistance")
     with c4: st.metric(label="Live Volume PCR", value=live_vol_pcr, delta="Active Flow")
-    with c5: st.metric(label="Max Pain Pin", value=f"₹{max_pain:,.0f}", delta="Expiry Magnet")
 
     st.markdown("---")
     
@@ -233,12 +214,10 @@ with tab1:
 
     st.markdown("---")
     
-    # Concentration Walls Quick Metrics
-    w1, w2, w3, w4 = st.columns(4)
+    w1, w2, w3 = st.columns(3)
     with w1: st.metric(label="🛡️ Major Support Wall (Max Put OI)", value=f"₹{support_wall:,}")
     with w2: st.metric(label="🧱 Major Resistance Wall (Max Call OI)", value=f"₹{resistance_wall:,}")
-    with w3: st.metric(label="🧲 Expiry Max Pain Anchor", value=f"₹{max_pain:,}")
-    with w4: st.metric(label="📊 Divergence Delta", value=pcr_diff)
+    with w3: st.metric(label="📊 Divergence Delta", value=pcr_diff)
 
     st.markdown("---")
     st.markdown(f"### 📊 Intraday OI PCR vs Volume PCR Divergence Chart (`{selected_symbol}`)")
@@ -265,7 +244,7 @@ with tab1:
     st.plotly_chart(fig, use_container_width=True)
 
 with tab2:
-    st.markdown(f"### 🔥 Feature 4: Advanced Smart Buildup & Concentration Walls Scanner (`{selected_symbol}`)")
+    st.markdown(f"### 🔥 Smart Buildup & Concentration Walls Scanner (`{selected_symbol}`)")
     
     chain_df['Dist'] = abs(chain_df['STRIKE'] - live_spot)
     c_idx = chain_df['Dist'].idxmin()
@@ -288,29 +267,10 @@ with tab2:
     st.dataframe(clean_matrix, use_container_width=True, height=500, hide_index=True)
 
 with tab3:
-    st.markdown(f"### 🎯 Feature 1 & 3: Max Pain Profile & IV Skew (Fear / Greed Meter)")
-    
-    col_iv1, col_iv2 = st.columns(2)
-    with col_iv1:
-        st.markdown("#### 📉 Implied Volatility (IV) Skew & Smile")
-        fig_iv = go.Figure()
-        fig_iv.add_trace(go.Scatter(x=chain_df['STRIKE'].astype(str), y=chain_df['CE IV'], mode='lines', name="Call IV", line=dict(color='#d73a49', width=2)))
-        fig_iv.add_trace(go.Scatter(x=chain_df['STRIKE'].astype(str), y=chain_df['PE IV'], mode='lines', name="Put IV (Skew)", line=dict(color='#28a745', width=2)))
-        fig_iv.update_layout(template='plotly_white', height=320, margin=dict(l=10, r=10, t=20, b=10), xaxis=dict(type='category'))
-        st.plotly_chart(fig_iv, use_container_width=True)
-    with col_iv2:
-        st.markdown("#### 🧲 Expiry Settlement Payout / Pain Curve")
-        df_pain_full = pd.DataFrame([{"Strike": k, "Pain": v} for k, v in pain_dict.items()])
-        fig_pain = go.Figure()
-        fig_pain.add_trace(go.Bar(x=df_pain_full['Strike'].astype(str), y=df_pain_full['Pain'], marker_color=['#28a745' if s == max_pain else '#0366d6' for s in df_pain_full['Strike']]))
-        fig_pain.update_layout(template='plotly_white', height=320, margin=dict(l=10, r=10, t=20, b=10), xaxis=dict(type='category'))
-        st.plotly_chart(fig_pain, use_container_width=True)
-
-with tab4:
-    st.markdown(f"### 🚀 Feature 5: Institutional Multi-Expiry Execution Rulebook")
+    st.markdown(f"### 🚀 Institutional Execution Rulebook & Strategy Deck (`{selected_symbol}`)")
     st.success(f"""
     **💎 Pro Terminal Checklist for {selected_symbol}:**
-    1. **Max Pain Pinning:** Current expiry expiration is mathematically anchored around **₹{max_pain:,}**. Expect heavy pinning towards this strike during the final hours.
-    2. **Support & Resistance Defence:** Institutions are heavily defending **₹{support_wall:,}** (Support) and **₹{resistance_wall:,}** (Resistance). 
-    3. **Actionable Execution:** Trade strictly in the direction indicated by the Automated Signal Engine. Do not fight the smart-money flow!
+    1. **Support & Resistance Walls:** Institutions are actively defending **₹{support_wall:,}** (Support) and **₹{resistance_wall:,}** (Resistance). 
+    2. **Divergence Monitoring:** Keep an eye on the divergence between OI PCR and Volume PCR. Large gaps indicate sudden institutional positioning shifts.
+    3. **Actionable Execution:** Trade strictly based on the automated signal engine parameters. Avoid emotional trades!
     """)
