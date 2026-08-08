@@ -26,7 +26,7 @@ except ImportError:
         return ["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "TCS", "SBIN"]
 
 st.set_page_config(page_title="Institutional Master Option Chain Desk", page_icon="⚡", layout="wide")
-st.markdown("## ⚡ Institutional Option Chain, Settlement & Gamma Flip Terminal (Advanced HFT Edition)")
+st.markdown("## ⚡ Institutional Option Chain, Settlement & Gamma Flip Terminal (Master Edition)")
 st.markdown("---")
 
 init_global_state()
@@ -34,7 +34,7 @@ all_symbols = get_available_symbols()
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_gex_v4")
+selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_gex_v5")
 st.session_state.global_symbol = selected_symbol
 
 resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
@@ -45,12 +45,12 @@ strike_range_mode = st.sidebar.radio(
     "Option Chain Strike Range", 
     ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
     index=1,
-    key="strike_range_gex_v4"
+    key="strike_range_gex_v5"
 )
 
 tab1, tab2, tab3 = st.tabs([
-    "📊 Live Option Chain, OI Walls & Buildup", 
-    "🎯 Max Pain, Settlement & Gamma Exposure (GEX)", 
+    "📊 Live Option Chain & OI Walls", 
+    "🎯 Max Pain, Settlement & GEX Profile", 
     "🚀 IV Smile, Sigma Bands & Strategy Desk"
 ])
 
@@ -127,10 +127,12 @@ if chain_df.empty:
     for s in strikes_arr:
         c_oi = np.random.randint(50000, 350000)
         p_oi = np.random.randint(50000, 350000)
+        # Realistic IV Skew simulation for IV Smile
+        skew_factor = abs(s - live_spot) / 1500.0
         mock_recs.append({
             "CE OI (L)": round(c_oi/100000, 2), "CE Chg OI": np.random.randint(-15000, 20000), "CE Vol": np.random.randint(50000, 800000),
-            "CE LTP": max(5.0, round(float(np.random.normal(100, 50)), 2)), "CE %Chg": round(np.random.uniform(-10, 15), 2), "CE IV": def_iv + abs(s - live_spot)/1000.0, 
-            "STRIKE": int(s), "PE IV": def_iv + abs(live_spot - s)/1000.0, "PE %Chg": round(np.random.uniform(-10, 15), 2), "PE LTP": max(5.0, round(float(np.random.normal(100, 50)), 2)), 
+            "CE LTP": max(5.0, round(float(np.random.normal(100, 50)), 2)), "CE %Chg": round(np.random.uniform(-10, 15), 2), "CE IV": def_iv + skew_factor, 
+            "STRIKE": int(s), "PE IV": def_iv + skew_factor + 0.5, "PE %Chg": round(np.random.uniform(-10, 15), 2), "PE LTP": max(5.0, round(float(np.random.normal(100, 50)), 2)), 
             "PE Vol": np.random.randint(50000, 800000), "PE Chg OI": np.random.randint(-15000, 20000), "PE OI (L)": round(p_oi/100000, 2),
             "Raw_CE_OI": c_oi, "Raw_PE_OI": p_oi
         })
@@ -238,13 +240,11 @@ with tab1:
 
     st.markdown("---")
 
-    # Smart Buildup Column Addition
     def classify_buildup(row):
-        if row['CE %Chg'] > 0 and row['CE Chg OI'] > 0: ce_b = "Short Buildup"
-        elif row['CE %Chg'] < 0 and row['CE Chg OI'] < 0: ce_b = "Long Unwinding"
-        elif row['CE %Chg'] > 0 and row['CE Chg OI'] < 0: ce_b = "Short Covering"
-        else: ce_b = "Long Buildup"
-        return ce_b
+        if row['CE %Chg'] > 0 and row['CE Chg OI'] > 0: return "Short Buildup"
+        elif row['CE %Chg'] < 0 and row['CE Chg OI'] < 0: return "Long Unwinding"
+        elif row['CE %Chg'] > 0 and row['CE Chg OI'] < 0: return "Short Covering"
+        return "Long Buildup"
 
     disp_df['OI Action'] = disp_df.apply(classify_buildup, axis=1)
 
@@ -260,7 +260,6 @@ with tab1:
     st.markdown(f"### Live Option Chain & Smart Buildup Matrix ({strike_range_mode})")
     st.dataframe(matrix_df, use_container_width=True, height=520, hide_index=True)
 
-    # Clean Light Theme OI Walls Chart strictly matching selected range with X-Axis Zoom Lock
     st.markdown("### Open Interest Concentration Walls (Support & Resistance)")
     wall_df = disp_df.copy()
     
@@ -326,7 +325,6 @@ with tab2:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- ADVANCED NET GEX PROFILE CHART ---
     st.markdown("### ⚡ Net Gamma Exposure (GEX) Distribution by Strike")
     fig_gex = go.Figure()
     gex_plot_df = chain_df.copy()
@@ -348,14 +346,13 @@ with tab2:
     )
     st.plotly_chart(fig_gex, use_container_width=True)
 
-    # Institutional Conclusion Box
     st.markdown("---")
     col_c1, col_c2 = st.columns(2)
     with col_c1:
         st.info(f"""
         **🎯 Settlement & Pinning Bias:**
         * **Max Pain Target:** ₹{max_pain:,.0f} (यहाँ एक्सपायरी होने पर ऑप्शन बायर्स को सबसे ज्यादा नुकसान और सेलर्स को फायदा होगा)।
-        * **Gamma Flip Level:** ₹{flip_strike:,.0f} (इसके ऊपर मार्केट शांत और रेंजबाउंड रहेगा, नीचे जाने पर वोलैटिलिटी spike करेगी)।
+        * **Gamma Flip Level:** ₹{flip_strike:,.0f} (इसके ऊपर मार्केट शांत रहेगा, नीचे जाने पर वोलैटिलिटी spike करेगी)।
         """)
     with col_c2:
         distance_to_pain = live_spot - max_pain
@@ -369,7 +366,7 @@ with tab2:
 with tab3:
     st.markdown(f"### IV Smile / Skew & Volatility Bands ({selected_symbol})")
     
-    # --- IV SMILE / SKEW CHART ---
+    # --- IV SMILE / SKEW CHART (FIXED & SYNCED) ---
     fig_iv = go.Figure()
     iv_plot_df = disp_df.copy()
     fig_iv.add_trace(go.Scatter(x=iv_plot_df['STRIKE'].astype(str), y=iv_plot_df['CE IV'], mode='lines+markers', name="Call IV", line=dict(color='#d73a49', width=2)))
@@ -409,17 +406,16 @@ with tab3:
     with s2_c2: st.metric(label="Extreme Upper Limit", value=f"₹{upper_2s:,.2f}")
     with s2_c3: st.metric(label="Extreme Lower Limit", value=f"₹{lower_2s:,.2f}")
     
-    # --- AUTOMATED STRATEGY DESK ---
     st.markdown("---")
     st.markdown("### 🤖 Institutional Strategy Recommendation Engine")
     if dynamic_pcr > 1.2:
         strat_name = "Bull Put Spread / Put Selling"
-        strat_desc = "PCR बहुत अधिक (Bullish) है। आप नीचे के सपोर्ट स्ट्राइक पर पुट बेचकर या बुल पुट स्प्रेड बना कर प्रीमियम खा सकते हैं।"
+        strat_desc = "PCR बहुत अधिक (Bullish) है। नीचे के सपोर्ट स्ट्राइक पर पुट बेचकर या बुल पुट स्प्रेड बनाकर प्रीमियम कमाएं।"
     elif dynamic_pcr < 0.8:
         strat_name = "Bear Call Spread / Call Selling"
         strat_desc = "PCR कम (Bearish) है। ऊपर के रेजिस्टेंस स्ट्राइक पर कॉल बेचकर फायदा उठाया जा सकता है।"
     else:
         strat_name = "Iron Condor / Short Strangle (Rangebound)"
-        strat_desc = "PCR न्यूट्रल है। Gamma Flip और Max Pain के बीच मार्केट रहने की उम्मीद है, अतः शॉर्ट स्ट्रैंग्गल या आयरन कोंडोर सबसे बेस्ट रहेगा।"
+        strat_desc = "PCR न्यूट्रल है। Gamma Flip और Max Pain के बीच बाजार रहने की उम्मीद है, अतः शॉर्ट स्ट्रैंग्गल या आयरन कोंडोर सबसे बेस्ट रहेगा।"
 
     st.warning(f"**Recommended Strategy:** **{strat_name}**\n\n{strat_desc}")
