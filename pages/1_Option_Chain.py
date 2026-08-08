@@ -19,7 +19,7 @@ except ImportError:
     def init_global_state():
         if "global_symbol" not in st.session_state: st.session_state.global_symbol = "NIFTY"
     def get_asset_details_from_master(sym):
-        return (13, "IDX_I", 25) if sym == "NIFTY" else (25, "IDX_I", 15)
+        return (13, "IDX_I", 65) if sym.upper() == "NIFTY" else (25, "IDX_I", 30)
     def fetch_live_expiries(c, t, s, seg):
         return ["2026-08-13", "2026-08-20"]
     def get_available_symbols():
@@ -34,18 +34,32 @@ all_symbols = get_available_symbols()
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_gex_v6")
+selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_gex_master")
 st.session_state.global_symbol = selected_symbol
 
-resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
+# Master fetch with Sidebar Manual Lot Size Control
+resolved_sec_id, resolved_seg, master_lot = get_asset_details_from_master(selected_symbol)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### ⚙️ Lot Size Control")
+lot_size = st.sidebar.number_input(
+    "Verify / Override Lot Size", 
+    min_value=1, 
+    max_value=10000, 
+    value=int(master_lot), 
+    step=1,
+    key=f"lot_override_p1_{selected_symbol}",
+    help="मास्टर फाइल या गलत डेटा होने पर यहाँ से सही लॉट साइज़ सेट करें।"
+)
+
 expiries = fetch_live_expiries(client_id, access_token, resolved_sec_id, resolved_seg)
-selected_expiry = st.sidebar.selectbox("Expiry Date", expiries)
+selected_expiry = st.sidebar.selectbox("Expiry Date", expiries, key="oc_exp_master")
 
 strike_range_mode = st.sidebar.radio(
     "Option Chain Strike Range", 
     ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
     index=1,
-    key="strike_range_gex_v6"
+    key="strike_range_gex_master"
 )
 
 tab1, tab2, tab3 = st.tabs([
@@ -115,7 +129,6 @@ chain_df, live_spot = fetch_institutional_option_chain(
     client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol
 )
 
-# Fallback Simulation if API credentials are blank
 if chain_df.empty:
     step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
     atm = round(live_spot / step) * step
@@ -127,7 +140,6 @@ if chain_df.empty:
     for s in strikes_arr:
         c_oi = np.random.randint(50000, 350000)
         p_oi = np.random.randint(50000, 350000)
-        # Robust Dynamic IV Skew/Smile calculation so curve is never flat
         distance_from_spot = abs(s - live_spot)
         skew_boost = (distance_from_spot / live_spot) * 35.0 + ((live_spot - s) / live_spot) * 5.0 if s < live_spot else (distance_from_spot / live_spot) * 20.0
         c_iv_val = round(def_iv + max(0.5, skew_boost * 0.4), 2)
@@ -142,7 +154,6 @@ if chain_df.empty:
         })
     chain_df = pd.DataFrame(mock_recs)
 
-# --- ADVANCED BLACK-SCHOLES GREEKS & GEX ENGINE ---
 def calculate_institutional_greeks_and_gex(df, spot, lot):
     r = 0.06 
     T = 4 / 365.0 
@@ -194,7 +205,6 @@ def calculate_institutional_greeks_and_gex(df, spot, lot):
 
 chain_df = calculate_institutional_greeks_and_gex(chain_df, live_spot, lot_size)
 
-# Strike Range Filtering Logic
 chain_df['Dist'] = abs(chain_df['STRIKE'] - live_spot)
 center_idx = chain_df['Dist'].idxmin()
 
@@ -207,7 +217,6 @@ elif "±30" in strike_range_mode:
 else:
     disp_df = chain_df.copy()
 
-# Accurate ATM IV Parsing
 disp_df['View_Dist'] = abs(disp_df['STRIKE'] - live_spot)
 atm_row_view = disp_df.loc[disp_df['View_Dist'].idxmin()]
 c_iv_v = atm_row_view['CE IV']
@@ -217,12 +226,10 @@ fallback_iv = default_ivs.get(selected_symbol, 13.5)
 dynamic_atm_iv = round((c_iv_v + p_iv_v) / 2.0, 2) if (c_iv_v > 0.5 and p_iv_v > 0.5) else fallback_iv
 disp_df = disp_df.drop(columns=['View_Dist'])
 
-# Filtered PCR
 filtered_ce_oi_sum = disp_df['Raw_CE_OI'].sum()
 filtered_pe_oi_sum = disp_df['Raw_PE_OI'].sum()
 dynamic_pcr = round(filtered_pe_oi_sum / filtered_ce_oi_sum, 2) if filtered_ce_oi_sum > 0 else 1.0
 
-# Robust Gamma Flip Calculation
 flip_strike = live_spot
 if not chain_df.empty:
     chain_df['Cum_GEX'] = chain_df['Net_GEX'].cumsum()
@@ -355,8 +362,8 @@ with tab2:
     with col_c1:
         st.info(f"""
         **🎯 Settlement & Pinning Bias:**
-        * **Max Pain Target:** ₹{max_pain:,.0f} (यहाँ एक्सपायरी होने पर ऑप्शन बायर्स को सबसे ज्यादा नुकसान और सेलर्स को फायदा होगा)।
-        * **Gamma Flip Level:** ₹{flip_strike:,.0f} (इसके ऊपर मार्केट शांत रहेगा, नीचे जाने पर वोलैटिलिटी spike करेगी)।
+        * **Max Pain Target:** ₹{max_pain:,.0f} (यहाँ एक्सपायरी होने पर ऑप्शन बायर्स को सबसे ज्यादा नुकसान होगा)।
+        * **Gamma Flip Level:** ₹{flip_strike:,.0f} (इसके ऊपर मार्केट शांत रहेगा)।
         """)
     with col_c2:
         distance_to_pain = live_spot - max_pain
@@ -364,13 +371,12 @@ with tab2:
         st.success(f"""
         **💡 Actionable Strategy & Setup:**
         * **Trend Bias:** {bias_str}
-        * **Execution:** Gamma Flip (₹{flip_strike:,.0f}) के पास आप्शन सेलिंग करना संस्थागत ट्रेडर्स की प्राथमिकता है।
+        * **Execution:** Gamma Flip (₹{flip_strike:,.0f}) के पास ऑप्शन सेलिंग करना बेस्ट है।
         """)
 
 with tab3:
     st.markdown(f"### IV Smile / Skew & Volatility Bands ({selected_symbol})")
     
-    # --- PROPER DYNAMIC IV SMILE / SKEW CURVE CHART ---
     fig_iv = go.Figure()
     iv_plot_df = disp_df.copy()
     fig_iv.add_trace(go.Scatter(x=iv_plot_df['STRIKE'].astype(str), y=iv_plot_df['CE IV'], mode='lines+markers', name="Call IV (Skew)", line=dict(color='#d73a49', width=2.5)))
@@ -409,17 +415,3 @@ with tab3:
     with s2_c1: st.metric(label="2-Sigma Range (±95.4%)", value=f"₹{move_2sigma:,.2f}")
     with s2_c2: st.metric(label="Extreme Upper Limit", value=f"₹{upper_2s:,.2f}")
     with s2_c3: st.metric(label="Extreme Lower Limit", value=f"₹{lower_2s:,.2f}")
-    
-    st.markdown("---")
-    st.markdown("### 🤖 Institutional Strategy Recommendation Engine")
-    if dynamic_pcr > 1.2:
-        strat_name = "Bull Put Spread / Put Selling"
-        strat_desc = "PCR बहुत अधिक (Bullish) है। नीचे के सपोर्ट स्ट्राइक पर पुट बेचकर या बुल पुट स्प्रेड बनाकर प्रीमियम कमाएं।"
-    elif dynamic_pcr < 0.8:
-        strat_name = "Bear Call Spread / Call Selling"
-        strat_desc = "PCR कम (Bearish) है। ऊपर के रेजिस्टेंस स्ट्राइक पर कॉल बेचकर फायदा उठाया जा सकता है।"
-    else:
-        strat_name = "Iron Condor / Short Strangle (Rangebound)"
-        strat_desc = "PCR न्यूट्रल है। Gamma Flip और Max Pain के बीच बाजार रहने की उम्मीद है, अतः शॉर्ट स्ट्रैंग्गल या आयरन कोंडोर सबसे बेस्ट रहेगा।"
-
-    st.warning(f"**Recommended Strategy:** **{strat_name}**\n\n{strat_desc}")
