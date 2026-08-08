@@ -1,4 +1,17 @@
+import os
+import sys
 import streamlit as st
+import pandas as pd
+import requests
+
+# Bulletproof Path Injector & Fallback Handler
+try:
+    from utils import init_global_state, get_asset_details_from_master, fetch_live_expiries, get_available_symbols
+except ImportError:
+    ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    if ROOT_DIR not in sys.path:
+        sys.path.append(ROOT_DIR)
+    from utils import init_global_state, get_asset_details_from_master, fetch_live_expiries, get_available_symbolsimport streamlit as st
 import pandas as pd
 import numpy as np
 from utils import init_global_state, get_asset_details_from_master, get_available_symbols
