@@ -1,4 +1,5 @@
 import os
+import sys
 import pandas as pd
 import streamlit as st
 import datetime
@@ -7,8 +8,13 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
+# Dynamic path injection to prevent ImportError across all pages
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '.'))
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
+
 def init_global_state():
-    """Initializes global session state for seamless multi-page navigation."""
+    """Initializes global session state for seamless multi-page institutional navigation."""
     if "global_symbol" not in st.session_state:
         st.session_state.global_symbol = "NIFTY"
     if "client_id" not in st.session_state:
@@ -28,7 +34,7 @@ def get_next_expiry():
 
 @st.cache_data(ttl=300)
 def fetch_live_expiries(c_id, token, sec_id, seg):
-    """Fetches real exchange expiry list with 5-minute caching."""
+    """Fetches real exchange expiry list with 5-minute caching to prevent rate-limiting."""
     if c_id and token:
         try:
             url = "https://api.dhan.co/v2/optionchain/expirylist"
@@ -45,10 +51,10 @@ def fetch_live_expiries(c_id, token, sec_id, seg):
 @st.cache_data(ttl=3600)
 def load_master_csv_safely():
     """Loads and caches master CSV once to optimize system RAM and speed."""
-    for file in os.listdir("."):
+    for file in os.listdir(ROOT_DIR):
         if file.endswith(".csv"):
             try:
-                df = pd.read_csv(file, low_memory=False)
+                df = pd.read_csv(os.path.join(ROOT_DIR, file), low_memory=False)
                 df.columns = [str(col).strip().upper() for col in df.columns]
                 return df
             except Exception:
