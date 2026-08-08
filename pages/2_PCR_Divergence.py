@@ -20,18 +20,18 @@ except ImportError:
     def get_asset_details_from_master(sym):
         return (13, "IDX_I", 65) if sym.upper() == "NIFTY" else (25, "IDX_I", 30)
     def fetch_live_expiries(c, t, s, seg):
-        return ["2026-08-13", "2026-08-20"]
+        return ["2026-08-13", "2026-08-20", "2026-08-27"]
     def get_available_symbols():
         return ["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "TCS", "SBIN"]
 
-st.set_page_config(page_title="Institutional PCR Divergence & Trade Signals Desk", page_icon="📈", layout="wide")
-st.markdown("## 📈 Institutional PCR Divergence & Automated Trade Signals Terminal")
+st.set_page_config(page_title="Institutional Master Derivative Terminal", page_icon="⚡", layout="wide")
+st.markdown("## ⚡ Ultimate Institutional PCR Divergence, Buildup & Smart-Money Terminal")
 st.markdown("---")
 
 init_global_state()
 all_symbols = get_available_symbols()
 
-selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="pcr_sym_signals")
+selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="pcr_sym_ultimate")
 st.session_state.global_symbol = selected_symbol
 
 # Master fetch with Sidebar Manual Lot Size Control
@@ -45,25 +45,26 @@ lot_size = st.sidebar.number_input(
     max_value=10000, 
     value=int(master_lot), 
     step=1,
-    key=f"lot_override_p2_sig_{selected_symbol}",
+    key=f"lot_override_ultimate_{selected_symbol}",
     help="मास्टर फाइल या गलत डेटा होने पर यहाँ से सही लॉट साइज़ सेट करें।"
 )
 
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 expiries = fetch_live_expiries(client_id, access_token, resolved_sec_id, resolved_seg)
-selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="pcr_exp_signals")
+selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="pcr_exp_ultimate")
 
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "📊 Advanced PCR & Trade Signals", 
-    "🔥 Strike-wise Smart OI Buildup Matrix",
+    "🔥 Smart Buildup & Walls Scanner",
+    "🎯 Max Pain & IV Skew Matrix",
     "🚀 Institutional Execution Desk"
 ])
 
 base_spot = 50500.0 if selected_symbol == "BANKNIFTY" else (24500.0 if selected_symbol == "NIFTY" else (23500.0 if selected_symbol == "FINNIFTY" else 2950.0))
 
 @st.cache_data(ttl=15)
-def fetch_signal_pcr_option_chain(c_id, token, sec_id, seg, exp, sym):
+def fetch_ultimate_option_chain(c_id, token, sec_id, seg, exp, sym):
     fallback_spot = 50500.0 if sym == "BANKNIFTY" else (24500.0 if sym == "NIFTY" else 2950.0)
     if not c_id or not token:
         return pd.DataFrame(), fallback_spot
@@ -88,14 +89,20 @@ def fetch_signal_pcr_option_chain(c_id, token, sec_id, seg, exp, sym):
                 pe_oi = int(pe.get("oi", 0))
                 ce_vol = int(ce.get("volume", 0))
                 pe_vol = int(pe.get("volume", 0))
+                ce_iv = float(ce.get("iv", 12.0))
+                pe_iv = float(pe.get("iv", 12.0))
+                ce_chg = int(ce.get("previous_oi", ce_oi) - ce_oi)
+                pe_chg = int(pe.get("previous_oi", pe_oi) - pe_oi)
                 
                 records.append({
                     "STRIKE": int(s_val),
                     "CE OI (L)": round(ce_oi / 100000.0, 2),
-                    "CE Chg OI": int(ce.get("previous_oi", ce_oi) - ce_oi),
+                    "CE Chg OI": ce_chg,
                     "CE Vol": ce_vol,
+                    "CE IV": ce_iv,
+                    "PE IV": pe_iv,
                     "PE Vol": pe_vol,
-                    "PE Chg OI": int(ce.get("previous_oi", pe_oi) - pe_oi),
+                    "PE Chg OI": pe_chg,
                     "PE OI (L)": round(pe_oi / 100000.0, 2),
                     "Raw_CE_OI": ce_oi,
                     "Raw_PE_OI": pe_oi,
@@ -110,28 +117,30 @@ def fetch_signal_pcr_option_chain(c_id, token, sec_id, seg, exp, sym):
         pass
     return pd.DataFrame(), fallback_spot
 
-chain_df, live_spot = fetch_signal_pcr_option_chain(
+chain_df, live_spot = fetch_ultimate_option_chain(
     client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol
 )
 
 if chain_df.empty:
     step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
     atm = round(live_spot / step) * step
-    strikes_arr = [atm + (i * step) for i in range(-15, 16)]
+    strikes_arr = [atm + (i * step) for i in range(-20, 21)]
     mock_recs = []
     np.random.seed(42)
     for s in strikes_arr:
-        c_oi = np.random.randint(150000, 400000)
-        p_oi = np.random.randint(120000, 350000)
-        c_vol = np.random.randint(50000, 800000)
-        p_vol = np.random.randint(60000, 750000)
+        c_oi = np.random.randint(150000, 450000)
+        p_oi = np.random.randint(120000, 400000)
+        c_vol = np.random.randint(50000, 900000)
+        p_vol = np.random.randint(60000, 850000)
         mock_recs.append({
             "STRIKE": int(s),
             "CE OI (L)": round(c_oi/100000, 2),
-            "CE Chg OI": np.random.randint(-20000, 30000),
+            "CE Chg OI": np.random.randint(-25000, 35000),
             "CE Vol": c_vol,
+            "CE IV": round(11.5 + np.random.uniform(0, 3), 2),
+            "PE IV": round(12.0 + np.random.uniform(0, 3), 2),
             "PE Vol": p_vol,
-            "PE Chg OI": np.random.randint(-20000, 30000),
+            "PE Chg OI": np.random.randint(-25000, 35000),
             "PE OI (L)": round(p_oi/100000, 2),
             "Raw_CE_OI": c_oi,
             "Raw_PE_OI": p_oi,
@@ -140,7 +149,7 @@ if chain_df.empty:
         })
     chain_df = pd.DataFrame(mock_recs)
 
-# --- MATHEMATICAL CALCULATIONS ---
+# --- ADVANCED MATHEMATICAL ENGINES ---
 total_ce_oi = float(chain_df['Raw_CE_OI'].sum()) if 'Raw_CE_OI' in chain_df.columns else 0.0
 total_pe_oi = float(chain_df['Raw_PE_OI'].sum()) if 'Raw_PE_OI' in chain_df.columns else 0.0
 live_oi_pcr = round(total_pe_oi / total_ce_oi, 2) if total_ce_oi > 0 else 1.0
@@ -151,7 +160,25 @@ live_vol_pcr = round(total_pe_vol / total_ce_vol, 2) if total_ce_vol > 0 else 1.
 
 pcr_diff = round(live_oi_pcr - live_vol_pcr, 2)
 
-# --- AUTOMATED TRADE SIGNAL & CONDITION ENGINE ---
+# Feature 1: Max Pain Calculation Engine
+strikes_list = chain_df['STRIKE'].values
+pain_dict = {}
+for expiry_price in strikes_list:
+    total_pain = 0
+    for _, row in chain_df.iterrows():
+        k = row['STRIKE']
+        if expiry_price > k: total_pain += (expiry_price - k) * row['Raw_CE_OI']
+        if expiry_price < k: total_pain += (k - expiry_price) * row['Raw_PE_OI']
+    pain_dict[expiry_price] = total_pain
+max_pain = min(pain_dict, key=pain_dict.get) if pain_dict else live_spot
+
+# Feature 2: Support & Resistance Concentration Walls
+max_call_oi_row = chain_df.loc[chain_df['Raw_CE_OI'].idxmax()] if not chain_df.empty else None
+max_put_oi_row = chain_df.loc[chain_df['Raw_PE_OI'].idxmax()] if not chain_df.empty else None
+resistance_wall = int(max_call_oi_row['STRIKE']) if max_call_oi_row is not None else live_spot + 500
+support_wall = int(max_put_oi_row['STRIKE']) if max_put_oi_row is not None else live_spot - 500
+
+# Feature 3: Automated Trade Signal & Condition Engine
 def generate_institutional_trade_signal(oi_pcr, vol_pcr, diff):
     if oi_pcr >= 1.2 and vol_pcr >= 1.2:
         return {
@@ -163,7 +190,7 @@ def generate_institutional_trade_signal(oi_pcr, vol_pcr, diff):
         return {
             "bias": "🩸 Strong Bearish (Aggressive Call Writing & Selling)",
             "action": "Sell on Rise / Bear Call Spread / Long PE",
-            "desc": "OI और Volume दोनों PCR बेहद कमजोर (0.8 से नीचे) हैं। कॉल राइटर्स रेजिस्टेंस पर डटे हैं। बाजार में ऊपर के स्तरों पर जोरदार बिकवाली आएगी।"
+            "desc": "OI और Volume दोनों PCR बेहद कमजोर हैं। कॉल राइटर्स रेजिस्टेंस पर डटे हैं। बाजार में ऊपर के स्तरों पर जोरदार बिकवाली आएगी।"
         }
     elif diff > 0.15:
         return {
@@ -175,13 +202,13 @@ def generate_institutional_trade_signal(oi_pcr, vol_pcr, diff):
         return {
             "bias": "⚠️ Bearish Divergence / Trap Warning",
             "action": "Book Profits / Avoid Long Positions",
-            "desc": "Volume PCR अचानक गिर रहा है जबकि OI PCR ऊँचा दिख रहा है। यह इस बात का संकेत है कि बुल ट्रैप (Bull Trap) बन रहा है, लॉन्ग पोजीशन से दूर रहें।"
+            "desc": "Volume PCR अचानक गिर रहा है जबकि OI PCR ऊँचा दिख रहा है। यह बुल ट्रैप (Bull Trap) का संकेत है, लॉन्ग पोजीशन से दूर रहें।"
         }
     else:
         return {
             "bias": "⚖️ Neutral / Rangebound Market",
             "action": "Short Strangle / Iron Condor (Range Trading)",
-            "desc": "दोनों PCR न्यूट्रल जोन (0.9 से 1.1 के बीच) में हैं। बाजार एक सीमित दायरे (Range) में कटेगा। प्रीमियम खाने (Option Selling) के लिए यह सबसे बेहतरीन समय है।"
+            "desc": "दोनों PCR न्यूट्रल जोन में हैं। बाजार Max Pain और Walls के बीच दायरे में कटेगा। प्रीमियम खाने (Option Selling) के लिए बेस्ट समय है।"
         }
 
 signal_data = generate_institutional_trade_signal(live_oi_pcr, live_vol_pcr, pcr_diff)
@@ -190,19 +217,28 @@ with tab1:
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1: st.metric(label="Asset", value=selected_symbol)
     with c2: st.metric(label="Live Spot", value=f"₹{live_spot:,.2f}")
-    with c3: st.metric(label="Live OI PCR (Positional)", value=live_oi_pcr, delta="Support Bias" if live_oi_pcr >= 1.0 else "Resistance Bias")
-    with c4: st.metric(label="Live Vol PCR (Intraday)", value=live_vol_pcr, delta="Active Flow")
-    with c5: st.metric(label="Lot Size", value=lot_size)
+    with c3: st.metric(label="Live OI PCR", value=live_oi_pcr, delta="Support Bias" if live_oi_pcr >= 1.0 else "Resistance")
+    with c4: st.metric(label="Live Volume PCR", value=live_vol_pcr, delta="Active Flow")
+    with c5: st.metric(label="Max Pain Pin", value=f"₹{max_pain:,.0f}", delta="Expiry Magnet")
 
     st.markdown("---")
     
-    # --- AUTOMATED SIGNAL BANNER ---
+    # Automated Signal Banner
     st.markdown("### 🎯 Automated Institutional Trade Signal & Setup")
     sig_col1, sig_col2 = st.columns([1.5, 2.5])
     with sig_col1:
         st.error(f"**Market Bias:**\n\n{signal_data['bias']}")
     with sig_col2:
         st.success(f"**Recommended Execution / Trade Setup:**\n\n🔹 **Action:** `{signal_data['action']}`\n\n📖 **Logic:** {signal_data['desc']}")
+
+    st.markdown("---")
+    
+    # Concentration Walls Quick Metrics
+    w1, w2, w3, w4 = st.columns(4)
+    with w1: st.metric(label="🛡️ Major Support Wall (Max Put OI)", value=f"₹{support_wall:,}")
+    with w2: st.metric(label="🧱 Major Resistance Wall (Max Call OI)", value=f"₹{resistance_wall:,}")
+    with w3: st.metric(label="🧲 Expiry Max Pain Anchor", value=f"₹{max_pain:,}")
+    with w4: st.metric(label="📊 Divergence Delta", value=pcr_diff)
 
     st.markdown("---")
     st.markdown(f"### 📊 Intraday OI PCR vs Volume PCR Divergence Chart (`{selected_symbol}`)")
@@ -220,12 +256,8 @@ with tab1:
     fig.add_trace(go.Scatter(x=time_slots, y=vol_pcr_series, name="Volume PCR (Intraday)", line=dict(color='#6f42c1', width=2, dash='dot')), secondary_y=True)
     
     fig.update_layout(
-        template='plotly_white', 
-        plot_bgcolor='#ffffff', 
-        paper_bgcolor='#ffffff', 
-        font=dict(color='#24292e', size=12),
-        height=420,
-        margin=dict(l=20, r=20, t=30, b=20),
+        template='plotly_white', plot_bgcolor='#ffffff', paper_bgcolor='#ffffff', 
+        font=dict(color='#24292e', size=12), height=400, margin=dict(l=20, r=20, t=30, b=20),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     fig.update_yaxes(title_text="Spot Price (₹)", secondary_y=False, fixedrange=True)
@@ -233,33 +265,52 @@ with tab1:
     st.plotly_chart(fig, use_container_width=True)
 
 with tab2:
-    st.markdown(f"### 🔥 Strike-wise Smart Open Interest & Volume Buildup Matrix (`{selected_symbol}`)")
+    st.markdown(f"### 🔥 Feature 4: Advanced Smart Buildup & Concentration Walls Scanner (`{selected_symbol}`)")
     
     chain_df['Dist'] = abs(chain_df['STRIKE'] - live_spot)
     c_idx = chain_df['Dist'].idxmin()
     matrix_disp = chain_df.iloc[max(0, c_idx-12):min(len(chain_df), c_idx+13)].copy()
     
-    def classify_advanced_buildup(row):
+    def classify_smart_buildup(row):
         c_chg = row['CE Chg OI']
         p_chg = row['PE Chg OI']
-        if c_chg > 0 and p_chg > 0: return "Strangle / Straddle Writing (Rangebound)"
-        elif c_chg < 0 and p_chg < 0: return "Position Unwinding"
-        elif c_chg > 0: return "Call Writing (Strong Resistance)"
-        elif p_chg > 0: return "Put Writing (Strong Support)"
-        return "Consolidation"
+        if c_chg > 0 and p_chg > 0: return "🔒 Short Straddle/Strangle Writing"
+        elif c_chg < 0 and p_chg < 0: return "🍃 Position Unwinding"
+        elif c_chg > 0: return "🧱 Call Writing (Resistance Building)"
+        elif p_chg > 0: return "🛡️ Put Writing (Support Building)"
+        return "⚖️ Range Consolidation"
 
-    matrix_disp['Institutional Action'] = matrix_disp.apply(classify_advanced_buildup, axis=1)
+    matrix_disp['Institutional Action'] = matrix_disp.apply(classify_smart_buildup, axis=1)
     
     clean_matrix = matrix_disp[['CE OI (L)', 'CE Chg OI', 'CE Vol', 'STRIKE', 'PE Vol', 'PE Chg OI', 'PE OI (L)', 'Institutional Action']].copy()
-    clean_matrix.columns = ['Call OI (L)', 'Call Chg OI', 'Call Volume', 'Strike Price', 'Put Volume', 'Put Chg OI', 'Put OI (L)', 'Smart Money Bias']
+    clean_matrix.columns = ['Call OI (L)', 'Call Chg OI', 'Call Volume', 'Strike Price', 'Put Volume', 'Put Chg OI', 'Put OI (L)', 'Smart Money Buildup']
     
     st.dataframe(clean_matrix, use_container_width=True, height=500, hide_index=True)
 
 with tab3:
-    st.markdown(f"### 🚀 Institutional Execution Desk & Rulebook (`{selected_symbol}`)")
-    st.info("""
-    **📋 How to read this Automated Signal Engine:**
-    * **OI PCR (Positional Flow):** यह बताता है कि मार्केट में लॉन्ग टर्म या वीकली एक्सपायरी के लिए ट्रेडर्स किस तरफ पोजीशन बांधकर बैठे हैं (Put Writers vs Call Writers)।
-    * **Volume PCR (Intraday Momentum):** यह बताता है कि आज के सेशन में किस स्ट्राइक पर सबसे ज्यादा सौदे और वॉल्यूम जनरेट हो रहे हैं।
-    * **The Merge Condition (Divergence):** जब पोजीशनल डेटा (OI) और मोमेंटम डेटा (Volume) एक ही दिशा में इशारा करते हैं, तब हाई-प्रोबेबिलिटी ट्रेड सिग्नल जनरेट होता है।
+    st.markdown(f"### 🎯 Feature 1 & 3: Max Pain Profile & IV Skew (Fear / Greed Meter)")
+    
+    col_iv1, col_iv2 = st.columns(2)
+    with col_iv1:
+        st.markdown("#### 📉 Implied Volatility (IV) Skew & Smile")
+        fig_iv = go.Figure()
+        fig_iv.add_trace(go.Scatter(x=chain_df['STRIKE'].astype(str), y=chain_df['CE IV'], mode='lines', name="Call IV", line=dict(color='#d73a49', width=2)))
+        fig_iv.add_trace(go.Scatter(x=chain_df['STRIKE'].astype(str), y=chain_df['PE IV'], mode='lines', name="Put IV (Skew)", line=dict(color='#28a745', width=2)))
+        fig_iv.update_layout(template='plotly_white', height=320, margin=dict(l=10, r=10, t=20, b=10), xaxis=dict(type='category'))
+        st.plotly_chart(fig_iv, use_container_width=True)
+    with col_iv2:
+        st.markdown("#### 🧲 Expiry Settlement Payout / Pain Curve")
+        df_pain_full = pd.DataFrame([{"Strike": k, "Pain": v} for k, v in pain_dict.items()])
+        fig_pain = go.Figure()
+        fig_pain.add_trace(go.Bar(x=df_pain_full['Strike'].astype(str), y=df_pain_full['Pain'], marker_color=['#28a745' if s == max_pain else '#0366d6' for s in df_pain_full['Strike']]))
+        fig_pain.update_layout(template='plotly_white', height=320, margin=dict(l=10, r=10, t=20, b=10), xaxis=dict(type='category'))
+        st.plotly_chart(fig_pain, use_container_width=True)
+
+with tab4:
+    st.markdown(f"### 🚀 Feature 5: Institutional Multi-Expiry Execution Rulebook")
+    st.success(f"""
+    **💎 Pro Terminal Checklist for {selected_symbol}:**
+    1. **Max Pain Pinning:** Current expiry expiration is mathematically anchored around **₹{max_pain:,}**. Expect heavy pinning towards this strike during the final hours.
+    2. **Support & Resistance Defence:** Institutions are heavily defending **₹{support_wall:,}** (Support) and **₹{resistance_wall:,}** (Resistance). 
+    3. **Actionable Execution:** Trade strictly in the direction indicated by the Automated Signal Engine. Do not fight the smart-money flow!
     """)
