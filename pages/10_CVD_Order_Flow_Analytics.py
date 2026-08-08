@@ -24,8 +24,8 @@ except ImportError:
     def get_available_symbols():
         return ["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "SBIN"]
 
-st.set_page_config(page_title="Institutional CVD & Order Flow Terminal", page_icon="📊", layout="wide")
-st.markdown("## 📊 Institutional Cumulative Volume Delta (CVD) & Order Flow Intelligence")
+st.set_page_config(page_title="Advanced Institutional CVD & Order Flow Terminal", page_icon="📊", layout="wide")
+st.markdown("## 📊 Advanced Institutional Cumulative Volume Delta (CVD) & Order Flow Intelligence")
 st.markdown("---")
 
 init_global_state()
@@ -35,7 +35,7 @@ access_token = st.session_state.get("access_token", "")
 
 # --- SIDEBAR PARAMETERS ---
 st.sidebar.markdown("### ⚙️ CVD & Order Flow Desk")
-selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="cvd_sym_sel_fix")
+selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="cvd_sym_pro")
 st.session_state.global_symbol = selected_symbol
 
 # Master Fetch for Security ID, Segment and Lot Size
@@ -49,18 +49,18 @@ lot_size = st.sidebar.number_input(
     max_value=10000, 
     value=int(master_lot), 
     step=1,
-    key=f"cvd_lot_override_fix_{selected_symbol}",
+    key=f"cvd_lot_pro_{selected_symbol}",
     help="मास्टर फाइल से सिंक्ड लॉट साइज़।"
 )
 
 expiries = fetch_live_expiries(client_id, access_token, resolved_sec_id, resolved_seg)
 if not expiries:
     expiries = ["2026-08-13"]
-selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="cvd_exp_sel_fix")
+selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="cvd_exp_pro")
 
 # --- QUANTITATIVE CVD & ORDER FLOW ENGINE ---
 @st.cache_data(ttl=30)
-def fetch_order_flow_cvd_data_safe(c_id, token, sec_id, seg, exp, sym, lot):
+def fetch_advanced_order_flow(c_id, token, sec_id, seg, exp, sym, lot):
     fallback_spot = 50500.0 if "BANK" in sym.upper() else (24500.0 if "NIFTY" in sym.upper() else 2500.0)
     if not c_id or not token: 
         return pd.DataFrame(), fallback_spot
@@ -118,7 +118,7 @@ def fetch_order_flow_cvd_data_safe(c_id, token, sec_id, seg, exp, sym, lot):
         pass
     return pd.DataFrame(), fallback_spot
 
-df_cvd, live_spot = fetch_order_flow_cvd_data_safe(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol, lot_size)
+df_cvd, live_spot = fetch_advanced_order_flow(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol, lot_size)
 
 if df_cvd.empty or live_spot <= 0.0:
     step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
@@ -144,7 +144,7 @@ if df_cvd.empty or live_spot <= 0.0:
         })
     df_cvd = pd.DataFrame(mock_recs)
 
-# --- SAFE INDEXING GUARD ---
+# --- SAFE INDEXING & FILTERING ---
 df_cvd['Dist'] = abs(df_cvd['Strike'] - live_spot)
 if not df_cvd.empty:
     c_idx = int(df_cvd['Dist'].idxmin())
@@ -152,75 +152,83 @@ if not df_cvd.empty:
 else:
     disp_cvd = df_cvd.copy()
 
-# --- ORDER FLOW METRICS ---
+# --- ADVANCED ORDER FLOW METRICS ---
 total_net_delta = disp_cvd['Volume Delta'].sum()
 total_ce_vol = disp_cvd['CE Volume'].sum()
 total_pe_vol = disp_cvd['PE Volume'].sum()
-
 delta_imbalance_ratio = round((total_ce_vol - total_pe_vol) / (total_ce_vol + total_pe_vol + 1e-8) * 100.0, 2)
 
-# --- AUTOMATED ORDER FLOW SIGNAL ENGINE ---
-def generate_order_flow_signal(imbalance, net_d):
-    if imbalance > 15.0 and net_d > 0:
+# Institutional Footprint (Max Delta Strike)
+max_delta_row = disp_cvd.loc[disp_cvd['Volume Delta'].abs().idxmax()] if not disp_cvd.empty else None
+institutional_strike = int(max_delta_row['Strike']) if max_delta_row is not None else live_spot
+
+# --- AUTOMATED PROFESSIONAL SIGNAL ENGINE ---
+def generate_professional_signals(imbalance, net_d, spot, inst_strike):
+    if imbalance > 12.0 and net_d > 0:
         return {
-            "bias": "🚀 Aggressive Bullish Buying (Call Flow Dominance)",
-            "action": "Long / Buy Dips / Bullish Spread",
-            "desc": "ऑर्डर फ्लो में कॉल वॉल्यूम और बाइंग डेल्टा भारी मात्रा में हावी है।"
+            "bias": "🚀 Aggressive Bullish Order Flow (Call Flow Dominance)",
+            "action": "Long / Buy Dips / Bullish Spread Setup",
+            "setup": f" Institutional Footprint दर्ज की गई स्ट्राइक: ₹{inst_strike:,}. बाजार में कॉल बाइंग का मजबूत प्रेशर है।"
         }
-    elif imbalance < -15.0 and net_d < 0:
+    elif imbalance < -12.0 and net_d < 0:
         return {
-            "bias": "🚨 Heavy Bearish Selling (Put Flow Dominance)",
+            "bias": "🚨 Heavy Bearish Pressure (Put Flow Dominance)",
             "action": "Short / Hedged Bear Spread / Protective Puts",
-            "desc": "ऑर्डर फ्लो में पुट बाइंग और सेलिंग प्रेशर अत्यधिक है।"
+            "setup": f" Institutional Footprint दर्ज की गई स्ट्राइक: ₹{inst_strike:,}. पुट साइड में एग्रेसिव सेलिंग/बाइंग हावी है।"
         }
     else:
         return {
             "bias": "⚖️ Neutral Order Flow & Balanced Delta",
-            "action": "Rangebound Strategy / Delta Neutral",
-            "desc": "बायर्स और सेलर्स के बीच संतुलन है।"
+            "action": "Rangebound Iron Condor / Delta Neutral",
+            "setup": f" बाजार में बायर्स और सेलर्स संतुलित हैं। प्रमुख पिवट स्ट्राइक: ₹{inst_strike:,}."
         }
 
-of_signal = generate_order_flow_signal(delta_imbalance_ratio, total_net_delta)
+pro_signal = generate_professional_signals(delta_imbalance_ratio, total_net_delta, live_spot, institutional_strike)
 
 # --- SIDEBAR SIGNAL PANEL ---
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🎯 Order Flow Signal")
-st.sidebar.info(f"**Market Bias:**\n{of_signal['bias']}")
-st.sidebar.success(f"**Execution Setup:**\n`{of_signal['action']}`\n\n📖 {of_signal['desc']}")
+st.sidebar.markdown("### 🎯 Professional Trade Signals")
+st.sidebar.info(f"**Market Bias:**\n{pro_signal['bias']}")
+st.sidebar.success(f"**Execution Strategy:**\n`{pro_signal['action']}`\n\n📖 {pro_signal['setup']}")
 
 # --- TOP METRICS DASHBOARD ---
 c1, c2, c3, c4, c5 = st.columns(5)
 with c1: st.metric(label="Live Spot Price", value=f"₹{live_spot:,.2f}")
-with c2: st.metric(label="Total Net Volume Delta", value=f"{total_net_delta:,.0f}", delta="Buying Pressure" if total_net_delta > 0 else "Selling Pressure")
-with c3: st.metric(label="Delta Imbalance Ratio", value=f"{delta_imbalance_ratio:+.2f}%")
-with c4: st.metric(label="Active Lot Size", value=str(lot_size))
-with c5: st.metric(label="Selected Expiry", value=str(selected_expiry))
+with c2: st.metric(label="Net Volume Delta", value=f"{total_net_delta:,.0f}", delta="Buying Pressure" if total_net_delta > 0 else "Selling Pressure")
+with c3: st.metric(label="Delta Imbalance", value=f"{delta_imbalance_ratio:+.2f}%")
+with c4: st.metric(label="Inst. Footprint Strike", value=f"₹{institutional_strike:,}")
+with c5: st.metric(label="Active Lot Size", value=str(lot_size))
 
 st.markdown("---")
 
 # --- TABS LAYOUT ---
 tab1, tab2 = st.tabs([
-    "📊 Cumulative Volume Delta (CVD) & Strike Profile", 
+    "📊 Cumulative Volume Delta (CVD) & White Background Chart", 
     "⚡ Strike-wise Order Flow Imbalance Matrix"
 ])
 
 with tab1:
     st.markdown(f"### 📈 Strike-wise Cumulative Volume Delta (CVD) Curve ({selected_symbol})")
     
+    # Plotly Chart with Clean White Background
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     bar_colors = ['#2ea043' if v >= 0 else '#f85149' for v in disp_cvd['Volume Delta']]
     
-    # Pure numeric X values to prevent Plotly mean calculation crashes
     fig.add_trace(go.Bar(x=disp_cvd['Strike'], y=disp_cvd['Volume Delta'], name="Volume Delta", marker_color=bar_colors), secondary_y=False)
-    fig.add_trace(go.Scatter(x=disp_cvd['Strike'], y=disp_cvd['Cumulative CVD'], name="Cumulative CVD", line=dict(color='#58a6ff', width=3)), secondary_y=True)
+    fig.add_trace(go.Scatter(x=disp_cvd['Strike'], y=disp_cvd['Cumulative CVD'], name="Cumulative CVD", line=dict(color='#1f77b4', width=3)), secondary_y=True)
     
-    # Numeric live_spot for clean vertical line rendering
-    fig.add_vline(x=live_spot, line_dash="solid", line_color="#ffd33d", annotation_text=f"Spot: ₹{live_spot:,.0f}")
+    fig.add_vline(x=live_spot, line_dash="solid", line_color="#d62728", annotation_text=f"Spot: ₹{live_spot:,.0f}")
     
     fig.update_layout(
-        template='plotly_dark', plot_bgcolor='#0d1117', paper_bgcolor='#0d1117', 
-        height=500, margin=dict(l=20, r=20, t=30, b=20),
-        xaxis=dict(title="Strike Price", type='linear'),
+        template='plotly_white',
+        plot_bgcolor='white',
+        paper_bgcolor='white',
+        font=dict(color='black'),
+        height=500,
+        margin=dict(l=20, r=20, t=30, b=20),
+        xaxis=dict(title="Strike Price", type='linear', gridcolor='#e1e4e8'),
+        yaxis=dict(title="Volume Delta", gridcolor='#e1e4e8'),
+        yaxis2=dict(title="Cumulative CVD", overlaying='y', side='right', showgrid=False),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     st.plotly_chart(fig, use_container_width=True)
