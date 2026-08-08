@@ -33,14 +33,41 @@ all_symbols = get_available_symbols()
 
 # --- PROFESSIONAL SIDEBAR CONTROLS ---
 st.sidebar.markdown("### ⚙️ Historical Desk Controls")
-selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="hist_heavy_sym")
+selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="hist_heavy_sym_v3")
 st.session_state.global_symbol = selected_symbol
 
-resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
+resolved_sec_id, resolved_seg, master_lot = get_asset_details_from_master(selected_symbol)
+
+# --- LOT SIZE CONTROL IN SIDEBAR ---
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 📦 Lot Size Control")
+lot_size = st.sidebar.number_input(
+    "Verify / Override Lot Size", 
+    min_value=1, 
+    max_value=10000, 
+    value=int(master_lot), 
+    step=1,
+    key=f"hist_lot_{selected_symbol}",
+    help="मास्टर फाइल से सिंक्ड या कस्टमाइज्ड लॉट साइज़।"
+)
+
+# --- SPOT PRICE OVERRIDE CONTROL (फिक्स करने के लिए) ---
+default_base_spot = 50500.0 if "BANK" in selected_symbol.upper() else (24500.0 if "NIFTY" in selected_symbol.upper() else 2500.0)
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🎯 Spot Price Calibration")
+manual_base_spot = st.sidebar.number_input(
+    "Correct Base / Spot Price",
+    min_value=1.0,
+    max_value=1000000.0,
+    value=float(default_base_spot),
+    step=10.0,
+    key=f"hist_spot_override_{selected_symbol}",
+    help="यदि स्पॉट प्राइस गलत दिखे, तो यहाँ सही बाजार भाव दर्ज करें।"
+)
 
 # Session Dates Configuration
 historical_dates = ["2026-08-07", "2026-08-06", "2026-08-05", "2026-08-04", "2026-08-03"]
-selected_date = st.sidebar.selectbox("Select Trading Session Date", historical_dates, key="hist_heavy_date")
+selected_date = st.sidebar.selectbox("Select Trading Session Date", historical_dates, key="hist_heavy_date_v3")
 
 # Analysis Engine Mode
 analysis_mode = st.sidebar.selectbox(
@@ -51,19 +78,18 @@ analysis_mode = st.sidebar.selectbox(
         "Volume Delta & Cumulative CVD Flow",
         "Max Pain & Gamma Exposure (GEX) History"
     ],
-    key="hist_heavy_mode"
+    key="hist_heavy_mode_v3"
 )
 
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"**Asset Core Details:**\n- Scrip ID: `{resolved_sec_id}`\n- Segment: `{resolved_seg}`\n- Lot Size: `{lot_size}`")
 
-# --- HEAVY-DUTY HISTORICAL ANALYTICS ENGINE ---
+# --- HEAVY-DUTY HISTORICAL ANALYTICS ENGINE WITH SPOT CORRECTION ---
 @st.cache_data(ttl=60)
-def fetch_heavy_historical_dataset(sym, dt, lot):
+def fetch_heavy_historical_dataset(sym, dt, lot, base_spot):
     try:
         np.random.seed(hash(sym + dt) % 2**32)
         
-        # High-Resolution Intraday Time Slots (Every 15-30 mins)
         time_slots = [
             "09:15", "09:30", "09:45", "10:00", "10:15", "10:30", "10:45", "11:00",
             "11:15", "11:30", "11:45", "12:00", "12:15", "12:30", "12:45", "13:00",
@@ -71,22 +97,19 @@ def fetch_heavy_historical_dataset(sym, dt, lot):
             "15:15", "15:30"
         ]
         
-        base_spot = 50500.0 if "BANK" in sym.upper() else (24500.0 if "NIFTY" in sym.upper() else 2500.0)
         step = 100 if "BANK" in sym.upper() else 50
         
         spots, pcr_vals, max_pain_vals = [], [], []
         ce_oi_list, pe_oi_list, vol_deltas, cvd_list, gex_list = [], [], [], [], []
         
-        curr_spot = base_spot
-        curr_mp = round(base_spot / step) * step
+        curr_spot = float(base_spot)
+        curr_mp = round(curr_spot / step) * step
         cum_cvd = 0.0
 
         for i, t in enumerate(time_slots):
-            # Price walk
-            curr_spot += np.random.normal(0, 18)
+            curr_spot += np.random.normal(0, 15)
             spots.append(round(curr_spot, 2))
             
-            # PCR & OI
             pcr = round(np.random.uniform(0.75, 1.35), 2)
             pcr_vals.append(pcr)
             
@@ -95,18 +118,15 @@ def fetch_heavy_historical_dataset(sym, dt, lot):
             ce_oi_list.append(c_oi)
             pe_oi_list.append(p_oi)
             
-            # Max Pain migration
             if i % 6 == 0 and i > 0:
                 curr_mp += step * np.random.choice([-1, 1])
             max_pain_vals.append(curr_mp)
             
-            # Volume Delta & CVD
             v_delta = round(np.random.uniform(-25000, 30000), 2)
             vol_deltas.append(v_delta)
             cum_cvd += v_delta
             cvd_list.append(round(cum_cvd, 2))
             
-            # GEX
             gex = round(np.random.uniform(-65.0, 85.0), 2)
             gex_list.append(gex)
 
@@ -125,7 +145,7 @@ def fetch_heavy_historical_dataset(sym, dt, lot):
     except Exception:
         return pd.DataFrame()
 
-df_hist = fetch_heavy_historical_dataset(selected_symbol, selected_date, lot_size)
+df_hist = fetch_heavy_historical_dataset(selected_symbol, selected_date, lot_size, manual_base_spot)
 
 # --- DASHBOARD LAYOUT & RENDERING ---
 if not df_hist.empty:
@@ -168,7 +188,7 @@ if not df_hist.empty:
             fig.add_trace(go.Bar(x=df_hist['Time'], y=df_hist['Volume Delta'], name="Period Volume Delta", marker_color=bar_colors), secondary_y=False)
             fig.add_trace(go.Scatter(x=df_hist['Time'], y=df_hist['Cumulative CVD'], name="Cumulative CVD", line=dict(color='#1f77b4', width=3)), secondary_y=True)
             y2_title = "Cumulative CVD"
-        else: # Max Pain & GEX
+        else:
             fig.add_trace(go.Scatter(x=df_hist['Time'], y=df_hist['Max Pain Strike'], name="Max Pain Strike", line=dict(color='#9467bd', width=3)), secondary_y=False)
             fig.add_trace(go.Scatter(x=df_hist['Time'], y=df_hist['Net GEX (₹ Cr)'], name="Net GEX (₹ Cr)", line=dict(color='#e377c2', width=2, dash='dot')), secondary_y=True)
             y2_title = "Net GEX (₹ Cr)"
