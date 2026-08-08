@@ -4,19 +4,14 @@ import streamlit as st
 import pandas as pd
 import requests
 
-# Bulletproof Path Injector & Fallback Handler
 try:
     from utils import init_global_state, get_asset_details_from_master, fetch_live_expiries, get_available_symbols
 except ImportError:
     ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    if ROOT_DIR not in sys.path:
-        sys.path.append(ROOT_DIR)
-    from utils import init_global_state, get_asset_details_from_master, fetch_live_expiries, get_available_symbolsimport streamlit as st
-import pandas as pd
-import requests
-from utils import init_global_state, get_asset_details_from_master, fetch_live_expiries, get_available_symbols
+    if ROOT_DIR not in sys.path: sys.path.append(ROOT_DIR)
+    from utils import init_global_state, get_asset_details_from_master, fetch_live_expiries, get_available_symbols
 
-st.set_page_config(page_title="Institutional Option Chain & Max Pain", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Option Chain & Max Pain", page_icon="⚡", layout="wide")
 st.markdown("## ⚡ Live Option Chain & Max Pain Settlement Desk")
 st.markdown("---")
 
@@ -25,12 +20,7 @@ all_symbols = get_available_symbols()
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-selected_symbol = st.sidebar.selectbox(
-    "Underlying Asset", 
-    all_symbols,
-    index=all_symbols.index(st.session_state.global_symbol) if st.session_state.global_symbol in all_symbols else 0,
-    key="global_symbol_oc"
-)
+selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym")
 st.session_state.global_symbol = selected_symbol
 
 resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
@@ -72,7 +62,7 @@ def fetch_option_chain_data(c_id, token, sec_id, seg, exp):
             df_out = pd.DataFrame(records)
             if not df_out.empty: df_out = df_out.sort_values(by="STRIKE").reset_index(drop=True)
             return df_out, spot_val
-    except Exception: 
+    except Exception:
         pass
     return pd.DataFrame(), 0.0
 
@@ -130,8 +120,8 @@ with tab2:
             strikes = [base_spot + (i * 100) for i in range(-15, 16)]
             df = pd.DataFrame({
                 "Strike": strikes,
-                "CE_OI": np.random.uniform(50000, 200000, len(strikes)),
-                "PE_OI": np.random.uniform(50000, 200000, len(strikes))
+                "CE_OI": np.random.uniform(50000, 200000, len(strikes)) if 'np' in globals() else [100000]*len(strikes),
+                "PE_OI": np.random.uniform(50000, 200000, len(strikes)) if 'np' in globals() else [100000]*len(strikes)
             })
             s_val_live = base_spot
 
