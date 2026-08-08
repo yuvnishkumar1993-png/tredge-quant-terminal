@@ -25,7 +25,7 @@ except ImportError:
         return ["NIFTY", "BANKNIFTY", "FINNIFTY", "RELIANCE", "TCS", "SBIN"]
 
 st.set_page_config(page_title="Institutional Master Option Chain Desk", page_icon="⚡", layout="wide")
-st.markdown("## ⚡ Institutional Master Option Chain, Expected Move & Settlement Desk")
+st.markdown("## ⚡ Institutional Option Chain & Settlement Terminal")
 st.markdown("---")
 
 init_global_state()
@@ -33,7 +33,7 @@ all_symbols = get_available_symbols()
 client_id = st.session_state.get("client_id", "")
 access_token = st.session_state.get("access_token", "")
 
-selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_ultimate_v4")
+selected_symbol = st.sidebar.selectbox("Underlying Asset", all_symbols, index=0, key="oc_sym_clean_v1")
 st.session_state.global_symbol = selected_symbol
 
 resolved_sec_id, resolved_seg, lot_size = get_asset_details_from_master(selected_symbol)
@@ -44,12 +44,12 @@ strike_range_mode = st.sidebar.radio(
     "Option Chain Strike Range", 
     ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
     index=1,
-    key="strike_range_ultimate_v4"
+    key="strike_range_clean_v1"
 )
 
 tab1, tab2, tab3 = st.tabs([
-    "📊 Live Option Chain Matrix & OI Walls", 
-    "🎯 Professional Max Pain & Settlement Desk", 
+    "📊 Live Option Chain & OI Walls", 
+    "🎯 Max Pain & Settlement Desk", 
     "🚀 Expected Move & Sigma Bands"
 ])
 
@@ -77,7 +77,7 @@ def fetch_exact_dhan_option_chain(c_id, token, sec_id, seg, exp, sym):
                 ce_oi = int(ce.get("oi", 0))
                 pe_oi = int(pe.get("oi", 0))
                 ce_iv = float(ce.get("iv", 0.0))
-                pe_iv = float(pe.get("iv", 0.0))
+                pe_iv = float(ce.get("iv", 0.0))
                 
                 records.append({
                     "CE OI (L)": round(ce_oi / 100000.0, 2),
@@ -139,7 +139,7 @@ elif "±30" in strike_range_mode:
 else:
     disp_df = chain_df.copy()
 
-# --- STANDARD ATM IV FORMULA (Extracting exact ATM strike IV with rigorous fallback proxy) ---
+# Range-Filtered ATM IV & PCR
 disp_df['View_Dist'] = abs(disp_df['STRIKE'] - live_spot)
 atm_row_view = disp_df.loc[disp_df['View_Dist'].idxmin()]
 c_iv_v = atm_row_view['CE IV']
@@ -152,63 +152,62 @@ elif c_iv_v > 1.0:
 elif p_iv_v > 1.0:
     dynamic_atm_iv = round(p_iv_v, 2)
 else:
-    # Standard official market mapping if API returns zeroes
     standard_ivs = {"BANKNIFTY": 12.53, "NIFTY": 13.8, "FINNIFTY": 13.2, "SENSEX": 11.9, "RELIANCE": 21.4}
     dynamic_atm_iv = standard_ivs.get(selected_symbol, 14.5)
 
 disp_df = disp_df.drop(columns=['View_Dist'])
 
-# --- RANGE-FILTERED TRUE PCR CALCULATION ---
 filtered_ce_oi_sum = disp_df['Raw_CE_OI'].sum()
 filtered_pe_oi_sum = disp_df['Raw_PE_OI'].sum()
 dynamic_pcr = round(filtered_pe_oi_sum / filtered_ce_oi_sum, 2) if filtered_ce_oi_sum > 0 else (0.88 if selected_symbol == "BANKNIFTY" else 1.05)
 
 with tab1:
     col_h1, col_h2, col_h3, col_h4, col_h5 = st.columns(5)
-    with col_h1: st.metric(label="🌐 Asset", value=selected_symbol)
-    with col_h2: st.metric(label="📈 Spot Price", value=f"₹{live_spot:,.2f}")
-    with col_h3: st.metric(label=f"⚡ ATM IV ({strike_range_mode})", value=f"{dynamic_atm_iv}%", delta="Standard Formula")
-    with col_h4: st.metric(label=f"📊 PCR ({strike_range_mode})", value=dynamic_pcr, delta="Range-Filtered")
-    with col_h5: st.metric(label="📦 Lot Size", value=lot_size)
+    with col_h1: st.metric(label="Asset", value=selected_symbol)
+    with col_h2: st.metric(label="Spot Price", value=f"₹{live_spot:,.2f}")
+    with col_h3: st.metric(label=f"ATM IV ({strike_range_mode})", value=f"{dynamic_atm_iv}%")
+    with col_h4: st.metric(label=f"PCR ({strike_range_mode})", value=dynamic_pcr)
+    with col_h5: st.metric(label="Lot Size", value=lot_size)
 
     st.markdown("---")
 
     def identify_buildup(row):
         if row['STRIKE'] > live_spot:
-            return "Short Buildup (Call Resistance)" if row['CE OI (L)'] > 80 else "Long Unwinding"
+            return "Short Buildup (Call Res)" if row['CE OI (L)'] > 80 else "Long Unwinding"
         elif row['STRIKE'] < live_spot:
-            return "Long Buildup (Put Support)" if row['PE OI (L)'] > 80 else "Short Covering"
-        return "ATM Straddle / Neutral"
+            return "Long Buildup (Put Sup)" if row['PE OI (L)'] > 80 else "Short Covering"
+        return "ATM / Neutral"
 
     disp_df['Institutional Buildup'] = disp_df.apply(identify_buildup, axis=1)
     clean_display_df = disp_df.drop(columns=['Dist', 'Raw_CE_OI', 'Raw_PE_OI'])
 
-    st.markdown(f"### 📊 Option Chain Matrix | Mode: `{strike_range_mode}`")
-    st.dataframe(clean_display_df, use_container_width=True, height=550, hide_index=True)
+    st.markdown(f"### Option Chain Matrix ({strike_range_mode})")
+    st.dataframe(clean_display_df, use_container_width=True, height=520, hide_index=True)
 
-    # --- USER-FRIENDLY SOFT CHARCOAL THEME FOR OI WALLS ---
-    st.markdown("### 🧱 Institutional Open Interest Walls (Support & Resistance Concentration)")
+    # --- PROFESSIONAL LIGHT-THEME OI WALLS CHART ---
+    st.markdown("### Open Interest Concentration Walls (Support & Resistance)")
     wall_df = disp_df.copy()
     
     fig_wall = go.Figure()
-    fig_wall.add_trace(go.Bar(x=wall_df['STRIKE'], y=wall_df['CE OI (L)'], name="Call OI Wall (Resistance)", marker_color='#f85149'))
-    fig_wall.add_trace(go.Bar(x=wall_df['STRIKE'], y=wall_df['PE OI (L)'], name="Put OI Wall (Support)", marker_color='#2ea043'))
-    fig_wall.add_vline(x=live_spot, line_dash="solid", line_color="#e3b341", annotation_text=f"Spot: ₹{live_spot}")
+    fig_wall.add_trace(go.Bar(x=wall_df['STRIKE'], y=wall_df['CE OI (L)'], name="Call OI (Resistance)", marker_color='#d73a49'))
+    fig_wall.add_trace(go.Bar(x=wall_df['STRIKE'], y=wall_df['PE OI (L)'], name="Put OI (Support)", marker_color='#28a745'))
+    fig_wall.add_vline(x=live_spot, line_dash="dash", line_color="#0366d6", annotation_text=f"Spot: ₹{live_spot}")
     
     fig_wall.update_layout(
-        template='plotly_dark',
-        plot_bgcolor='#161b22',   # Soft Charcoal (Zero Eye Strain)
-        paper_bgcolor='#0d1117',
+        template='plotly_white',  # Clean light theme for 100% clarity
+        plot_bgcolor='#ffffff',
+        paper_bgcolor='#ffffff',
+        font=dict(color='#24292e', size=12),
         barmode='group',
-        title="<b>Strike-wise Open Interest Concentration Walls (Lakhs)</b>",
         xaxis_title="Strike Prices",
         yaxis_title="Open Interest (Lakhs)",
-        height=380
+        height=380,
+        margin=dict(l=20, r=20, t=30, b=20)
     )
     st.plotly_chart(fig_wall, use_container_width=True)
 
 with tab2:
-    st.markdown(f"### 🎯 Institutional Max Pain & Gravitational Expiry Settlement Model (`{selected_symbol}`)")
+    st.markdown(f"### Max Pain & Gravitational Settlement Model ({selected_symbol})")
     
     strikes_list = chain_df['STRIKE'].values
     pain_dict = {}
@@ -225,48 +224,48 @@ with tab2:
     
     m1, m2, m3, m4 = st.columns(4)
     with m1: st.metric(label="Live Spot Price", value=f"₹{live_spot:,.2f}")
-    with m2: st.metric(label="🎯 Max Pain Strike", value=f"₹{max_pain:,.0f}", delta="Gravitational Magnet", delta_color="off")
-    with m3: st.metric(label="Spot vs Max Pain Distance", value=f"{abs(spot_distance):,.1f} pts", delta="ITM Gravitational Pull", delta_color="inverse")
-    with m4: st.metric(label="Active Expiry Date", value=selected_expiry)
+    with m2: st.metric(label="Max Pain Strike", value=f"₹{max_pain:,.0f}")
+    with m3: st.metric(label="Spot vs Max Pain", value=f"{abs(spot_distance):,.1f} pts")
+    with m4: st.metric(label="Expiry Date", value=selected_expiry)
 
     st.markdown("---")
 
     df_pain_full = pd.DataFrame([{"Strike": k, "Total Payout/Pain Value": v} for k, v in pain_dict.items()])
     
-    # --- USER-FRIENDLY SOFT CHARCOAL THEME FOR SETTLEMENT CURVE ---
+    # --- PROFESSIONAL LIGHT-THEME PAYOUT CURVE ---
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=df_pain_full['Strike'], 
         y=df_pain_full['Total Payout/Pain Value'],
-        name="Settlement Payout Pain",
-        marker_color=['#2ea043' if s == max_pain else '#388bfd' for s in df_pain_full['Strike']]
+        name="Settlement Pain",
+        marker_color=['#28a745' if s == max_pain else '#0366d6' for s in df_pain_full['Strike']]
     ))
     
-    fig.add_vline(x=max_pain, line_dash="dash", line_color="#2ea043", annotation_text=f"Max Pain: ₹{max_pain}", annotation_position="top left")
-    fig.add_vline(x=live_spot, line_dash="solid", line_color="#e3b341", annotation_text=f"Spot: ₹{live_spot}", annotation_position="top right")
+    fig.add_vline(x=max_pain, line_dash="dash", line_color="#28a745", annotation_text=f"Max Pain: ₹{max_pain}")
+    fig.add_vline(x=live_spot, line_dash="solid", line_color="#d73a49", annotation_text=f"Spot: ₹{live_spot}")
     
     fig.update_layout(
-        template='plotly_dark',
-        plot_bgcolor='#161b22',   # Soft Charcoal background protecting eyes
-        paper_bgcolor='#0d1117',
-        title="<b>Gravitational Payout Pain Distribution Curve</b>",
+        template='plotly_white',  # Clean light theme
+        plot_bgcolor='#ffffff',
+        paper_bgcolor='#ffffff',
+        font=dict(color='#24292e', size=12),
         xaxis_title="Strike Prices",
-        yaxis_title="Total Option Holder Pain (₹)",
-        height=420
+        yaxis_title="Holder Pain Value (₹)",
+        height=400,
+        margin=dict(l=20, r=20, t=30, b=20)
     )
     st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("---")
-
-    st.markdown("#### 📋 Professional Strike-wise Settlement Payout Table")
+    st.markdown("#### Strike-wise Settlement Payout Table")
     
     col_f1, col_f2 = st.columns([2, 4])
     with col_f1:
         settle_range_mode = st.selectbox(
-            "Select Settlement Table Range", 
+            "Select Table Range", 
             ["±10 Strikes", "±20 Strikes", "±30 Strikes", "Full Chain (All)"],
             index=1,
-            key="settle_table_range_selector_v5"
+            key="settle_table_range_selector_clean"
         )
 
     df_pain_full['Dist_Center'] = abs(df_pain_full['Strike'] - live_spot)
@@ -284,7 +283,7 @@ with tab2:
     disp_settle_df = disp_settle_df.drop(columns=['Dist_Center']).reset_index(drop=True)
     disp_settle_df['Pain Score (Cr)'] = round(disp_settle_df['Total Payout/Pain Value'] / 10000000.0, 2)
     disp_settle_df['Settlement Status'] = disp_settle_df['Strike'].apply(
-        lambda x: "🎯 Max Pain Magnet" if x == max_pain else ("In-The-Money (ITM)" if x < live_spot else "Out-of-The-Money (OTM)")
+        lambda x: "Max Pain Magnet" if x == max_pain else ("In-The-Money (ITM)" if x < live_spot else "Out-of-The-Money (OTM)")
     )
     
     final_table_view = disp_settle_df[['Strike', 'Pain Score (Cr)', 'Settlement Status', 'Total Payout/Pain Value']]
@@ -293,21 +292,21 @@ with tab2:
     def professional_table_styling(row):
         is_max = row['Strike Price'] == max_pain
         if is_max:
-            return ['background-color: #1f6feb; color: white; font-weight: bold; font-size: 15px;' for _ in row]
+            return ['background-color: #0366d6; color: white; font-weight: bold;' for _ in row]
         elif row['Strike Price'] < live_spot:
-            return ['background-color: rgba(46, 160, 67, 0.1); color: #2ea043;' for _ in row]
+            return ['background-color: #e6ffed; color: #28a745;' for _ in row]
         else:
-            return ['background-color: rgba(248, 81, 73, 0.05); color: #f85149;' for _ in row]
+            return ['background-color: #ffeef0; color: #d73a49;' for _ in row]
 
     st.dataframe(
         final_table_view.style.apply(professional_table_styling, axis=1), 
         use_container_width=True, 
-        height=400, 
+        height=380, 
         hide_index=True
     )
 
 with tab3:
-    st.markdown(f"### 🚀 Expected Move: 1-Sigma & 2-Sigma Volatility Probability Bands (`{selected_symbol}`)")
+    st.markdown(f"### Expected Move: 1-Sigma & 2-Sigma Volatility Bands ({selected_symbol})")
     
     days_to_expiry = 4 
     time_factor = math.sqrt(days_to_expiry / 365.0)
@@ -320,23 +319,16 @@ with tab3:
     upper_2s = live_spot + move_2sigma
     lower_2s = live_spot - move_2sigma
     
-    st.markdown("#### 🟢 1-Sigma Expected Move (68.2% Statistical Confidence)")
+    st.markdown("#### 1-Sigma Expected Move (68.2% Confidence)")
     s1_c1, s1_c2, s1_c3 = st.columns(3)
-    with s1_c1: st.metric(label="1-Sigma Range (±)", value=f"₹{move_1sigma:,.2f}", delta="Standard Deviation Band")
-    with s1_c2: st.metric(label="1-Sigma Upper Resistance", value=f"₹{upper_1s:,.2f}", delta="Expected Call Wall", delta_color="inverse")
-    with s1_c3: st.metric(label="1-Sigma Lower Support", value=f"₹{lower_1s:,.2f}", delta="Expected Put Wall", delta_color="normal")
+    with s1_c1: st.metric(label="1-Sigma Range (±)", value=f"₹{move_1sigma:,.2f}")
+    with s1_c2: st.metric(label="Upper Resistance", value=f"₹{upper_1s:,.2f}")
+    with s1_c3: st.metric(label="Lower Support", value=f"₹{lower_1s:,.2f}")
 
     st.markdown("---")
 
-    st.markdown("#### 🔵 2-Sigma Expected Move (95.4% Statistical Confidence — Extreme Bounds)")
+    st.markdown("#### 2-Sigma Expected Move (95.4% Confidence)")
     s2_c1, s2_c2, s2_c3 = st.columns(3)
-    with s2_c1: st.metric(label="2-Sigma Range (±)", value=f"₹{move_2sigma:,.2f}", delta="Wide Volatility Band")
-    with s2_c2: st.metric(label="2-Sigma Extreme Upper Limit", value=f"₹{upper_2s:,.2f}", delta="Tail Risk Resistance", delta_color="inverse")
-    with s2_c3: st.metric(label="2-Sigma Extreme Lower Limit", value=f"₹{lower_2s:,.2f}", delta="Tail Risk Support", delta_color="normal")
-
-    st.markdown("""
-    ---
-    ### 💡 Professional Volatility Sigma Guide:
-    * **Range-Filtered ATM IV & PCR:** Both ATM IV and PCR now dynamically adapt to your selected strike range ($\pm 10, \pm 20, \pm 30, \text{Full Chain}$).
-    * **Eye-Friendly UI:** All charts now feature a soft charcoal background (`#161b22`) to eliminate eye strain during prolonged trading hours.
-    """)
+    with s2_c1: st.metric(label="2-Sigma Range (±)", value=f"₹{move_2sigma:,.2f}")
+    with s2_c2: st.metric(label="Extreme Upper Limit", value=f"₹{upper_2s:,.2f}")
+    with s2_c3: st.metric(label="Extreme Lower Limit", value=f"₹{lower_2s:,.2f}")
