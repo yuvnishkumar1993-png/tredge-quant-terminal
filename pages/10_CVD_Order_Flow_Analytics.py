@@ -35,7 +35,7 @@ access_token = st.session_state.get("access_token", "")
 
 # --- SIDEBAR PARAMETERS ---
 st.sidebar.markdown("### ⚙️ CVD & Order Flow Desk")
-selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="cvd_master_sym_v2")
+selected_symbol = st.sidebar.selectbox("Select Underlying Asset", all_symbols, index=0, key="cvd_master_sym_v3")
 st.session_state.global_symbol = selected_symbol
 
 # Master Fetch (Pulls exact Security ID, Segment and Lot Size from Master CSV)
@@ -49,18 +49,18 @@ lot_size = st.sidebar.number_input(
     max_value=10000, 
     value=int(master_lot), 
     step=1,
-    key=f"cvd_master_lot_ctrl_v2_{selected_symbol}",
+    key=f"cvd_master_lot_ctrl_v3_{selected_symbol}",
     help="मास्टर फाइल या गलत डेटा होने पर यहाँ से सही लॉट साइज़ सेट करें।"
 )
 
 expiries = fetch_live_expiries(client_id, access_token, resolved_sec_id, resolved_seg)
 if not expiries:
     expiries = ["2026-08-13"]
-selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="cvd_master_exp_v2")
+selected_expiry = st.sidebar.selectbox("Select Expiry Date", expiries, key="cvd_master_exp_v3")
 
-# --- PROVEN OPTION CHAIN & CVD ENGINE ---
-@st.cache_data(ttl=30)
-def fetch_master_synced_cvd_data_v2(c_id, token, sec_id, seg, exp, sym, lot):
+# --- ROBUST MULTI-KEY VOLUME & CVD ENGINE ---
+@st.cache_data(ttl=20)
+def fetch_robust_cvd_data(c_id, token, sec_id, seg, exp, sym, lot):
     fallback_spot = 50500.0 if "BANK" in sym.upper() else (24500.0 if "NIFTY" in sym.upper() else 2500.0)
     if not c_id or not token: 
         return pd.DataFrame(), fallback_spot
@@ -73,7 +73,12 @@ def fetch_master_synced_cvd_data_v2(c_id, token, sec_id, seg, exp, sym, lot):
             res_json = res.json()
             block = res_json.get("data", {})
             
-            spot_val = float(block.get("last_price") or block.get("lp") or block.get("ltp") or block.get("underlying_price") or 0.0)
+            spot_val = float(
+                block.get("last_price") or 
+                block.get("lp") or 
+                block.get("ltp") or 
+                block.get("underlying_price") or 0.0
+            )
             if spot_val <= 0:
                 spot_val = fallback_spot
                 
@@ -87,24 +92,26 @@ def fetch_master_synced_cvd_data_v2(c_id, token, sec_id, seg, exp, sym, lot):
                 ce = obj.get("ce", {})
                 pe = obj.get("pe", {})
                 
-                ce_vol = float(ce.get("volume") or ce.get("traded_volume") or ce.get("v") or 0.0)
-                pe_vol = float(pe.get("volume") or pe.get("traded_volume") or pe.get("v") or 0.0)
+                # Multi-Key Extraction for Traded Volume and Open Interest
+                ce_vol = float(ce.get("volume") or ce.get("traded_volume") or ce.get("v") or ce.get("totalTradedVolume") or 0.0)
+                pe_vol = float(pe.get("volume") or pe.get("traded_volume") or pe.get("v") or pe.get("totalTradedVolume") or 0.0)
                 
-                ce_oi = float(ce.get("oi", 0.0))
-                pe_oi = float(pe.get("oi", 0.0))
+                ce_oi = float(ce.get("oi") or ce.get("openInterest") or 0.0)
+                pe_oi = float(pe.get("oi") or pe.get("openInterest") or 0.0)
                 
                 ce_ltp = float(ce.get("ltp") or ce.get("last_price") or 0.0)
                 pe_ltp = float(pe.get("ltp") or pe.get("last_price") or 0.0)
 
+                # Correct Order Flow Subtraction (Call Volume - Put Volume) * Lot Size
                 strike_delta = (ce_vol - pe_vol) * lot
                 
                 records.append({
                     "Strike": float(s_val),
-                    "CE Volume": ce_vol * lot,
-                    "PE Volume": pe_vol * lot,
+                    "CE Volume": ce_vol,
+                    "PE Volume": pe_vol,
                     "Volume Delta": round(strike_delta, 2),
-                    "CE OI": ce_oi * lot,
-                    "PE OI": pe_oi * lot,
+                    "CE OI": ce_oi,
+                    "PE OI": pe_oi,
                     "CE LTP": ce_ltp,
                     "PE LTP": pe_ltp
                 })
@@ -118,7 +125,7 @@ def fetch_master_synced_cvd_data_v2(c_id, token, sec_id, seg, exp, sym, lot):
         pass
     return pd.DataFrame(), fallback_spot
 
-df_cvd, live_spot = fetch_master_synced_cvd_data_v2(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol, lot_size)
+df_cvd, live_spot = fetch_robust_cvd_data(client_id, access_token, resolved_sec_id, resolved_seg, selected_expiry, selected_symbol, lot_size)
 
 if df_cvd.empty or live_spot <= 0.0:
     step = 100 if selected_symbol in ["BANKNIFTY", "SENSEX"] else 50
@@ -129,16 +136,16 @@ if df_cvd.empty or live_spot <= 0.0:
     mock_recs = []
     cum_d = 0.0
     for s in strikes:
-        d_val = np.random.uniform(-10000, 15000)
+        d_val = np.random.uniform(-1000, 1500)
         cum_d += d_val
         mock_recs.append({
             "Strike": float(s),
-            "CE Volume": 50000,
-            "PE Volume": 48000,
+            "CE Volume": 5000.0,
+            "PE Volume": 4800.0,
             "Volume Delta": round(d_val, 2),
             "Cumulative CVD": round(cum_d, 2),
-            "CE OI": 200000,
-            "PE OI": 190000,
+            "CE OI": 20000.0,
+            "PE OI": 19000.0,
             "CE LTP": 100.0,
             "PE LTP": 95.0
         })
@@ -162,13 +169,13 @@ max_delta_row = disp_cvd.loc[disp_cvd['Volume Delta'].abs().idxmax()] if not dis
 institutional_strike = int(max_delta_row['Strike']) if max_delta_row is not None else live_spot
 
 def generate_professional_signals(imbalance, net_d, spot, inst_strike):
-    if imbalance > 10.0 and net_d > 0:
+    if imbalance > 5.0 and net_d > 0:
         return {
             "bias": "🚀 Aggressive Bullish Order Flow (Call Flow Dominance)",
             "action": "Long / Buy Dips / Bullish Spread Setup",
             "setup": f" Institutional Footprint स्ट्राइक: ₹{inst_strike:,}. कॉल बाइंग का मजबूत प्रेशर है।"
         }
-    elif imbalance < -10.0 and net_d < 0:
+    elif imbalance < -5.0 and net_d < 0:
         return {
             "bias": "🚨 Heavy Bearish Pressure (Put Flow Dominance)",
             "action": "Short / Hedged Bear Spread / Protective Puts",
@@ -232,8 +239,5 @@ with tab1:
 
 with tab2:
     st.markdown("### 📊 Strike-wise Order Flow & Delta Matrix (Spot-Centered)")
-    # Using 'disp_cvd' instead of full df_cvd to ensure exact spot matching and cleanliness
     matrix_df = disp_cvd[['Strike', 'CE Volume', 'PE Volume', 'Volume Delta', 'Cumulative CVD', 'CE OI', 'PE OI']].copy()
-    
-    # Highlighting current ATM row or formatting for professional look
     st.dataframe(matrix_df, use_container_width=True, height=450, hide_index=True)
